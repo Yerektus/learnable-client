@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
+import { FullPageSpinner } from "@/components/ui/spinner"
 import { useAuthStore } from "@/lib/stores/auth-store"
 
 export function GuestGuard({ children }: { children: React.ReactNode }) {
@@ -20,11 +21,7 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
   }, [accessToken, hasHydrated, router, searchParams])
 
   if (!hasHydrated || accessToken) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background text-sm text-muted-foreground">
-        Loading...
-      </div>
-    )
+    return <FullPageSpinner />
   }
 
   return children

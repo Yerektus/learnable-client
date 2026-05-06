@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { QueryProvider } from "@/components/providers/query-provider"
+import { Toaster } from "@/components/ui/sonner"
 
 const fontSans = Geist({
   subsets: ["latin"],
@@ -28,6 +29,7 @@ export default function RootLayout({
       <body>
         <ThemeProvider>
           <QueryProvider>{children}</QueryProvider>
+          <Toaster position="top-center" />
         </ThemeProvider>
       </body>
     </html>

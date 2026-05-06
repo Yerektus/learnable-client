@@ -4,6 +4,7 @@ import * as React from "react"
 import { useQuery } from "@tanstack/react-query"
 import { usePathname, useRouter } from "next/navigation"
 
+import { FullPageSpinner } from "@/components/ui/spinner"
 import { getCurrentUser } from "@/lib/api/auth"
 import { useAuthStore } from "@/lib/stores/auth-store"
 
@@ -47,11 +48,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   }, [clearAuth, pathname, profileQuery.isError, router])
 
   if (!hasHydrated || !accessToken || (!user && profileQuery.isLoading)) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background text-sm text-muted-foreground">
-        Loading...
-      </div>
-    )
+    return <FullPageSpinner />
   }
 
   return children

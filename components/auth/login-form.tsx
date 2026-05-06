@@ -5,6 +5,7 @@ import { Loader2, LogIn, UserPlus } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import * as React from "react"
 import { useForm } from "react-hook-form"
+import { toast } from "sonner"
 
 import {
   login,
@@ -100,13 +101,18 @@ export function LoginForm({
       }
     },
     onSuccess: () => {
+      toast.success(
+        isRegister
+          ? "Account created successfully."
+          : "Logged in successfully."
+      )
       router.replace(searchParams.get("next") ?? "/dashboard")
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error))
     },
   })
 
-  const errorMessage = mutation.isError
-    ? getApiErrorMessage(mutation.error)
-    : null
   const isRegister = mode === "register"
 
   function switchMode(nextMode: AuthMode) {
@@ -247,7 +253,6 @@ export function LoginForm({
                   <FieldError>{errors.password.message}</FieldError>
                 ) : null}
               </Field>
-              {errorMessage ? <FieldError>{errorMessage}</FieldError> : null}
               {user ? (
                 <FieldDescription>Signed in as {user.email}</FieldDescription>
               ) : null}

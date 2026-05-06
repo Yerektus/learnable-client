@@ -1,42 +1,108 @@
 "use client"
 
-import {
-  Code2,
-  LogOut,
-  MoreHorizontal,
-  Plus,
-  Search,
-  Settings2,
-  Sparkles,
-} from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import type { ComponentProps } from "react"
+import * as React from "react"
+import { ArrowUpRightIcon, FolderCode, Loader2, SquareTerminal } from "lucide-react"
+import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { NavGraphs, NavGraphsLoading } from "@/components/nav-graphs"
+import { NavMain } from "@/components/nav-main"
+import { NavUser } from "@/components/nav-user"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
+  SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { getApiErrorMessage } from "@/lib/api/auth"
+import { createGraph, listGraphs } from "@/lib/api/graphs"
 import { useAuthStore } from "@/lib/stores/auth-store"
 
-const graphItems = ["Math", "Discrete", "graph a", "graph a"]
-
 export default function DashboardPage() {
+  const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
+  const accessToken = useAuthStore((state) => state.accessToken)
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
+  const [graphName, setGraphName] = React.useState("")
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const graphsQuery = useQuery({
+    queryKey: ["graphs"],
+    queryFn: listGraphs,
+    enabled: Boolean(accessToken),
+  })
+  const graphs =
+    graphsQuery.data?.map((graph, index) => ({
+      id: graph.id,
+      name: graph.name,
+      url: "#",
+      isActive: index === 0,
+    })) ?? []
+  const selectedGraph = graphs[0]
+  const hasSelectedGraph = Boolean(selectedGraph)
+  const trimmedGraphName = graphName.trim()
+
+  const createGraphMutation = useMutation({
+    mutationFn: createGraph,
+    onSuccess: async (graph) => {
+      await queryClient.invalidateQueries({ queryKey: ["graphs"] })
+      setGraphName("")
+      setFormError(null)
+      setIsCreateDialogOpen(false)
+      toast.success(`Graph "${graph.name}" created.`)
+    },
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error))
+    },
+  })
+
+  function handleCreateGraphSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!trimmedGraphName) {
+      setFormError("Graph name is required.")
+      return
+    }
+
+    setFormError(null)
+    createGraphMutation.mutate({ name: trimmedGraphName })
+  }
+
+  function closeCreateGraphDialog() {
+    if (createGraphMutation.isPending) {
+      return
+    }
+
+    setIsCreateDialogOpen(false)
+    setGraphName("")
+    setFormError(null)
+  }
 
   return (
     <AuthGuard>
@@ -46,158 +112,228 @@ export default function DashboardPage() {
             <AppSidebar
               userName={user?.username ?? user?.email ?? "Learner"}
               onLogout={clearAuth}
+              graphs={graphs}
+              isLoadingGraphs={graphsQuery.isLoading}
+              onCreateGraph={() => setIsCreateDialogOpen(true)}
             />
 
             <SidebarInset className="min-h-svh bg-neutral-950">
-              <Tabs
-                defaultValue="graphs"
-              >
-                <header className="flex min-h-16 items-center justify-between gap-4 px-4 sm:px-8 lg:px-16">
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <SidebarTrigger />
-                    </div>
-                    <TabsList>
-                      <TabsTrigger
-                        value="graphs"
-                      >
-                        Graphs
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="kanban"
-                      >
-                        Kanban
-                      </TabsTrigger>
-                    </TabsList>
-                  </div>
-
-                  <Button
-                    variant="outline"
-                  >
-                    <Sparkles className="size-4" />
-                    planning panel
-                  </Button>
-                </header>
-
-                <TabsContent value="graphs">
-                </TabsContent>
-
-                <TabsContent
-                  value="kanban"
-                  className="px-4 pb-6 sm:px-8 lg:px-16"
+              {hasSelectedGraph ? (
+                <Tabs
+                  defaultValue="graphs"
+                  className="grid grid-rows-[auto_1fr] gap-0"
                 >
-                  <div className="grid h-full gap-4 md:grid-cols-3">
-                    {["Backlog", "In progress", "Review"].map((column) => (
-                      <section
-                        key={column}
-                        className="min-h-48 rounded-lg border border-white/10 bg-white/[0.03] p-4"
-                      >
-                        <h2 className="text-sm font-medium text-neutral-200">
-                          {column}
-                        </h2>
-                      </section>
-                    ))}
-                  </div>
-                </TabsContent>
-              </Tabs>
+                  <header className="sticky top-0 z-10 flex min-h-20 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
+                    <TabsList>
+                      <TabsTrigger value="graphs">Graphs</TabsTrigger>
+                      <TabsTrigger value="kanban">Kanban</TabsTrigger>
+                    </TabsList>
+                  </header>
+
+                  <TabsContent value="graphs" className="min-h-0"></TabsContent>
+
+                  <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
+                    <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      {["Backlog", "Not started", "In progress", "Done"].map(
+                        (column) => (
+                          <section
+                            key={column}
+                            className="min-h-80 rounded-lg border border-white/10 bg-white/[0.03] p-4"
+                          >
+                            <h2 className="text-sm font-medium text-neutral-200">
+                              {column}
+                            </h2>
+                          </section>
+                        )
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+              ) : graphsQuery.isLoading ? null : (
+                <GraphsEmptyState
+                  onCreateGraph={() => setIsCreateDialogOpen(true)}
+                />
+              )}
             </SidebarInset>
           </div>
         </div>
+
+        <CreateGraphDialog
+          open={isCreateDialogOpen}
+          graphName={graphName}
+          formError={formError}
+          isPending={createGraphMutation.isPending}
+          canSubmit={Boolean(trimmedGraphName)}
+          onOpenChange={(open) => {
+            if (!open) {
+              closeCreateGraphDialog()
+            } else if (!createGraphMutation.isPending) {
+              setIsCreateDialogOpen(open)
+            }
+          }}
+          onGraphNameChange={(value) => {
+            setGraphName(value)
+            setFormError(null)
+          }}
+          onCancel={closeCreateGraphDialog}
+          onSubmit={handleCreateGraphSubmit}
+        />
       </SidebarProvider>
     </AuthGuard>
   )
 }
 
-function AppSidebar({
+function GraphsEmptyState({ onCreateGraph }: { onCreateGraph: () => void }) {
+  return (
+    <div className="flex min-h-svh items-center justify-center px-6">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <FolderCode />
+          </EmptyMedia>
+          <EmptyTitle>No Graphs Yet</EmptyTitle>
+          <EmptyDescription>
+            You haven&apos;t created any graphs yet. Get started by creating
+            your first graph.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent className="flex-row justify-center">
+          <Button onClick={onCreateGraph}>Create Graph</Button>
+        </EmptyContent>
+      </Empty>
+    </div>
+  )
+}
+
+function CreateGraphDialog({
+  open,
+  graphName,
+  formError,
+  isPending,
+  canSubmit,
+  onOpenChange,
+  onGraphNameChange,
+  onCancel,
+  onSubmit,
+}: {
+  open: boolean
+  graphName: string
+  formError: string | null
+  isPending: boolean
+  canSubmit: boolean
+  onOpenChange: (open: boolean) => void
+  onGraphNameChange: (value: string) => void
+  onCancel: () => void
+  onSubmit: (event: React.FormEvent<HTMLFormElement>) => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="rounded-lg bg-neutral-950 text-neutral-100 sm:max-w-sm">
+        <form onSubmit={onSubmit} className="grid gap-5">
+          <DialogHeader>
+            <DialogTitle>New graph</DialogTitle>
+            <DialogDescription className="sr-only">
+              Enter a graph name.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Field>
+            <FieldLabel htmlFor="graph-name">Name</FieldLabel>
+            <Input
+              id="graph-name"
+              value={graphName}
+              onChange={(event) => onGraphNameChange(event.target.value)}
+              placeholder="Math"
+              disabled={isPending}
+              aria-invalid={Boolean(formError)}
+              autoFocus
+            />
+            {formError ? <FieldError>{formError}</FieldError> : null}
+          </Field>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSubmit || isPending}>
+              {isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function AppSidebar({
   userName,
   onLogout,
+  graphs,
+  isLoadingGraphs,
+  onCreateGraph,
+  ...props
 }: {
   userName: string
   onLogout: () => void
-}) {
+  graphs: {
+    id: string
+    name: string
+    url: string
+    isActive?: boolean
+  }[]
+  isLoadingGraphs: boolean
+  onCreateGraph: () => void
+} & ComponentProps<typeof Sidebar>) {
+  const data = {
+    user: {
+      name: userName,
+      email: "Profile",
+      avatar: "",
+    },
+    navMain: [
+      {
+        title: "new graph",
+        url: "#",
+        icon: SquareTerminal,
+        onSelect: onCreateGraph,
+      },
+      {
+        title: "search graphs",
+        url: "#",
+        search: true,
+      },
+    ],
+    graphs,
+  }
+
   return (
-    <Sidebar className="border-sidebar-border bg-neutral-950">
-      <SidebarHeader className="justify-between border-r border-sidebar-border">
-        <div className="min-w-0">
-          <div className="truncate text-2xl font-medium text-neutral-50">
+    <Sidebar collapsible="icon" className="bg-neutral-950" {...props}>
+      <SidebarHeader className="border-r border-sidebar-border">
+        <div className="flex items-center justify-between gap-3 px-3 text-neutral-100 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2">
+          <span className="text-2xl font-medium group-data-[collapsible=icon]:hidden">
             Learnable
-          </div>
-          <div className="mt-1 truncate text-xs text-neutral-500">
-            {userName}
-          </div>
+          </span>
+          <SidebarTrigger className="size-8 text-neutral-400 group-data-[state=collapsed]:cursor-e-resize group-data-[state=expanded]:cursor-w-resize hover:bg-white/10 hover:text-neutral-100" />
         </div>
-        <SidebarTrigger className="text-neutral-200 hover:bg-white/10" />
       </SidebarHeader>
-
       <SidebarContent className="border-r border-sidebar-border">
-        <SidebarGroup className="gap-7 px-6 pt-10">
-          <SidebarGroupContent className="gap-2">
-            <Button
-              variant="ghost"
-              className="h-7 justify-start rounded-md px-0 text-sm text-neutral-100 hover:bg-transparent hover:text-white"
-            >
-              <Plus className="size-4 rounded-sm border border-white/70 p-0.5" />
-              new graph
-            </Button>
-
-            <label className="flex h-7 items-center gap-2 text-sm text-neutral-100">
-              <Search className="size-5 text-neutral-300" />
-              <Input
-                placeholder="search graphs"
-                className="h-7 rounded-none border-0 bg-transparent px-0 text-sm text-neutral-100 shadow-none ring-0 placeholder:text-neutral-300 focus-visible:ring-0"
-              />
-            </label>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-6 pt-8">
-          <SidebarGroupLabel className="px-0 text-base text-neutral-100">
-            Graphs
-          </SidebarGroupLabel>
-          <SidebarGroupContent className="-mx-6 mt-4">
-            <SidebarMenu>
-              {graphItems.map((item, index) => (
-                <SidebarMenuItem key={`${item}-${index}`}>
-                  <SidebarMenuButton
-                    isActive={index === 0}
-                    className="h-10 rounded-none px-8 text-neutral-200 data-[active=true]:bg-white/10"
-                  >
-                    <span className="truncate">{item}</span>
-                  </SidebarMenuButton>
-                  {index === 0 ? (
-                    <SidebarMenuAction className="right-5 text-neutral-100 hover:bg-white/10">
-                      <MoreHorizontal className="size-4" />
-                      <span className="sr-only">Graph actions</span>
-                    </SidebarMenuAction>
-                  ) : null}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <NavMain items={data.navMain} />
+        {isLoadingGraphs ? (
+          <NavGraphsLoading />
+        ) : (
+          <NavGraphs graphs={data.graphs} />
+        )}
       </SidebarContent>
-
-      <SidebarFooter className="grid gap-2 border-r border-sidebar-border px-6">
-        <Button
-          variant="ghost"
-          className="h-8 justify-start rounded-md px-0 text-sm text-neutral-100 hover:bg-transparent hover:text-white"
-        >
-          <Settings2 className="size-4" />
-          Settings
-        </Button>
-        <Button
-          variant="ghost"
-          className="h-8 justify-start rounded-md px-0 text-sm text-neutral-400 hover:bg-transparent hover:text-white"
-          type="button"
-          onClick={onLogout}
-        >
-          <LogOut className="size-4" />
-          Logout
-        </Button>
-        <div className="mt-2 inline-flex size-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
-          <Code2 className="size-5" />
-        </div>
+      <SidebarFooter className="border-r border-sidebar-border">
+        <NavUser user={data.user} onLogout={onLogout} />
       </SidebarFooter>
+      <SidebarRail />
     </Sidebar>
   )
 }
