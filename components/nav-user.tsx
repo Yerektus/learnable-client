@@ -24,9 +24,11 @@ type UserData = {
 export function NavUser({
   user,
   onLogout,
+  onOpenSettings,
 }: {
   user: UserData
   onLogout: () => void
+  onOpenSettings: () => void
 }) {
   return (
     <SidebarMenu>
@@ -63,7 +65,10 @@ export function NavUser({
             sideOffset={8}
             className="min-w-44 rounded-lg border border-white/10 bg-neutral-950 p-1 text-neutral-200 shadow-xl"
           >
-            <DropdownMenuItem className="cursor-pointer rounded-md hover:bg-white/10 focus:bg-white/10 focus:text-white">
+            <DropdownMenuItem
+              className="cursor-pointer rounded-md hover:bg-white/10 focus:bg-white/10 focus:text-white"
+              onClick={onOpenSettings}
+            >
               <Settings2 className="size-4" />
               <span>Settings</span>
             </DropdownMenuItem>

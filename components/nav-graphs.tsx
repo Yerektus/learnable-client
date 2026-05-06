@@ -15,7 +15,13 @@ type Graph = {
   isActive?: boolean
 }
 
-export function NavGraphs({ graphs }: { graphs: Graph[] }) {
+export function NavGraphs({
+  graphs,
+  onSelectGraph,
+}: {
+  graphs: Graph[]
+  onSelectGraph?: (graphId: string) => void
+}) {
   return (
     <SidebarGroup>
       <SidebarGroupLabel className="text-base text-neutral-100">
@@ -30,6 +36,7 @@ export function NavGraphs({ graphs }: { graphs: Graph[] }) {
                   isActive={graph.isActive}
                   className="rounded-none rounded-full text-neutral-200 hover:bg-white/10 hover:text-white data-active:bg-white/10 group-data-[collapsible=icon]:data-active:!bg-transparent group-data-[collapsible=icon]:hover:!bg-transparent"
                   tooltip={graph.name}
+                  onClick={() => onSelectGraph?.(graph.id)}
                 >
                   <span className="group-data-[collapsible=icon]:hidden">
                     {graph.name}

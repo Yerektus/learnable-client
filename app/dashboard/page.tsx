@@ -3,14 +3,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { ComponentProps } from "react"
 import * as React from "react"
-import { ArrowUpRightIcon, FolderCode, Loader2, SquareTerminal } from "lucide-react"
+import { FolderCode, Loader2, SquareTerminal } from "lucide-react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
 import { NavGraphs, NavGraphsLoading } from "@/components/nav-graphs"
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
+import { SettingsDialog } from "@/components/settings-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
 import {
   Dialog,
   DialogContent,
@@ -50,6 +60,11 @@ export default function DashboardPage() {
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const accessToken = useAuthStore((state) => state.accessToken)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = React.useState(false)
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
+  const [selectedGraphId, setSelectedGraphId] = React.useState<string | null>(
+    null
+  )
   const [graphName, setGraphName] = React.useState("")
   const [formError, setFormError] = React.useState<string | null>(null)
   const graphsQuery = useQuery({
@@ -58,13 +73,13 @@ export default function DashboardPage() {
     enabled: Boolean(accessToken),
   })
   const graphs =
-    graphsQuery.data?.map((graph, index) => ({
+    graphsQuery.data?.map((graph) => ({
       id: graph.id,
       name: graph.name,
       url: "#",
-      isActive: index === 0,
+      isActive: graph.id === selectedGraphId,
     })) ?? []
-  const selectedGraph = graphs[0]
+  const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
   const hasSelectedGraph = Boolean(selectedGraph)
   const trimmedGraphName = graphName.trim()
 
@@ -75,6 +90,7 @@ export default function DashboardPage() {
       setGraphName("")
       setFormError(null)
       setIsCreateDialogOpen(false)
+      setSelectedGraphId(graph.id)
       toast.success(`Graph "${graph.name}" created.`)
     },
     onError: (error) => {
@@ -115,6 +131,9 @@ export default function DashboardPage() {
               graphs={graphs}
               isLoadingGraphs={graphsQuery.isLoading}
               onCreateGraph={() => setIsCreateDialogOpen(true)}
+              onSearchGraphs={() => setIsSearchDialogOpen(true)}
+              onOpenSettings={() => setIsSettingsDialogOpen(true)}
+              onSelectGraph={setSelectedGraphId}
             />
 
             <SidebarInset className="min-h-svh bg-neutral-950">
@@ -149,7 +168,11 @@ export default function DashboardPage() {
                     </div>
                   </TabsContent>
                 </Tabs>
-              ) : graphsQuery.isLoading ? null : (
+              ) : graphsQuery.isLoading ? null : graphs.length > 0 ? (
+                <SelectGraphEmptyState
+                  onSearchGraphs={() => setIsSearchDialogOpen(true)}
+                />
+              ) : (
                 <GraphsEmptyState
                   onCreateGraph={() => setIsCreateDialogOpen(true)}
                 />
@@ -178,8 +201,48 @@ export default function DashboardPage() {
           onCancel={closeCreateGraphDialog}
           onSubmit={handleCreateGraphSubmit}
         />
+        <GraphSearchDialog
+          open={isSearchDialogOpen}
+          graphs={graphs}
+          onOpenChange={setIsSearchDialogOpen}
+          onSelectGraph={(graphId) => {
+            setSelectedGraphId(graphId)
+            setIsSearchDialogOpen(false)
+          }}
+        />
+        <SettingsDialog
+          open={isSettingsDialogOpen}
+          onOpenChange={setIsSettingsDialogOpen}
+        />
       </SidebarProvider>
     </AuthGuard>
+  )
+}
+
+function SelectGraphEmptyState({
+  onSearchGraphs,
+}: {
+  onSearchGraphs: () => void
+}) {
+  return (
+    <div className="flex min-h-svh items-center justify-center px-6">
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <FolderCode />
+          </EmptyMedia>
+          <EmptyTitle>No Graph Selected</EmptyTitle>
+          <EmptyDescription>
+            Select an existing graph to open its workspace.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent className="flex-row justify-center">
+          <Button onClick={onSearchGraphs} variant="outline">
+            Search Graphs
+          </Button>
+        </EmptyContent>
+      </Empty>
+    </div>
   )
 }
 
@@ -271,12 +334,60 @@ function CreateGraphDialog({
   )
 }
 
+function GraphSearchDialog({
+  open,
+  graphs,
+  onOpenChange,
+  onSelectGraph,
+}: {
+  open: boolean
+  graphs: {
+    id: string
+    name: string
+    url: string
+    isActive?: boolean
+  }[]
+  onOpenChange: (open: boolean) => void
+  onSelectGraph: (graphId: string) => void
+}) {
+  return (
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Search graphs"
+      description="Search and select a graph."
+    >
+      <Command>
+        <CommandInput placeholder="Search graphs..." />
+        <CommandList>
+          <CommandEmpty>No graphs found.</CommandEmpty>
+          <CommandGroup heading="Graphs">
+            {graphs.map((graph) => (
+              <CommandItem
+                key={graph.id}
+                value={`${graph.name} ${graph.id}`}
+                className="rounded-md bg-transparent data-[selected=true]:bg-white/10"
+                onSelect={() => onSelectGraph(graph.id)}
+              >
+                {graph.name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+    </CommandDialog>
+  )
+}
+
 export function AppSidebar({
   userName,
   onLogout,
   graphs,
   isLoadingGraphs,
   onCreateGraph,
+  onSearchGraphs,
+  onOpenSettings,
+  onSelectGraph,
   ...props
 }: {
   userName: string
@@ -289,6 +400,9 @@ export function AppSidebar({
   }[]
   isLoadingGraphs: boolean
   onCreateGraph: () => void
+  onSearchGraphs: () => void
+  onOpenSettings: () => void
+  onSelectGraph: (graphId: string) => void
 } & ComponentProps<typeof Sidebar>) {
   const data = {
     user: {
@@ -307,6 +421,7 @@ export function AppSidebar({
         title: "search graphs",
         url: "#",
         search: true,
+        onSelect: onSearchGraphs,
       },
     ],
     graphs,
@@ -327,11 +442,15 @@ export function AppSidebar({
         {isLoadingGraphs ? (
           <NavGraphsLoading />
         ) : (
-          <NavGraphs graphs={data.graphs} />
+          <NavGraphs graphs={data.graphs} onSelectGraph={onSelectGraph} />
         )}
       </SidebarContent>
       <SidebarFooter className="border-r border-sidebar-border">
-        <NavUser user={data.user} onLogout={onLogout} />
+        <NavUser
+          user={data.user}
+          onLogout={onLogout}
+          onOpenSettings={onOpenSettings}
+        />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
