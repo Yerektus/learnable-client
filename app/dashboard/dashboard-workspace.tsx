@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { ComponentProps } from "react"
 import * as React from "react"
-import { FolderCode, Loader2, SquareTerminal } from "lucide-react"
+import { FolderCode, Loader2, Sparkles, SquareTerminal } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
@@ -52,9 +52,13 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { KanbanBoard } from "@/components/kanban-board"
+import { PlanningPanel } from "@/components/planning-panel"
 import { getApiErrorMessage } from "@/lib/api/auth"
 import { createGraph, listGraphs } from "@/lib/api/graphs"
+import type { ChatMessage } from "@/lib/api/ai"
 import { useAuthStore } from "@/lib/stores/auth-store"
+import { cn } from "@/lib/utils"
 
 export function DashboardWorkspace({
   initialGraphId = null,
@@ -69,6 +73,8 @@ export function DashboardWorkspace({
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = React.useState(false)
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
+  const [isPlanningPanelOpen, setIsPlanningPanelOpen] = React.useState(false)
+  const [planningMessages, setPlanningMessages] = React.useState<ChatMessage[]>([])
   const [selectedGraphId, setSelectedGraphId] = React.useState<string | null>(
     initialGraphId
   )
@@ -88,6 +94,10 @@ export function DashboardWorkspace({
     })) ?? []
   const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
   const trimmedGraphName = graphName.trim()
+
+  React.useEffect(() => {
+    setPlanningMessages([])
+  }, [selectedGraphId])
 
   const createGraphMutation = useMutation({
     mutationFn: createGraph,
@@ -149,51 +159,70 @@ export function DashboardWorkspace({
             />
 
             <SidebarInset className="min-h-svh bg-neutral-950">
-              {selectedGraph ? (
-                <Tabs
-                  defaultValue="graphs"
-                  className="grid grid-rows-[auto_1fr] gap-0"
-                >
-                  <header className="sticky top-0 z-10 flex min-h-16 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
-                    <TabsList>
-                      <TabsTrigger value="graphs">Canvas</TabsTrigger>
-                      <TabsTrigger value="kanban">Kanban</TabsTrigger>
-                    </TabsList>
-                  </header>
-
-                  <TabsContent value="graphs" className="min-h-0">
-                    <LessonGraphCanvas
-                      key={selectedGraph.id}
-                      graphId={selectedGraph.id}
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
-                    <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
-                      {["Backlog", "Not started", "In progress", "Done"].map(
-                        (column) => (
-                          <section
-                            key={column}
-                            className="min-h-80 rounded-lg border border-white/10 bg-white/[0.03] p-4"
+              <div className="flex min-h-svh">
+                {/* Main content */}
+                <div className="flex-1 overflow-hidden">
+                  {selectedGraph ? (
+                    <Tabs
+                      defaultValue="graphs"
+                      className="grid h-svh grid-rows-[auto_1fr] gap-0"
+                    >
+                      <header className="sticky top-0 z-10 flex min-h-16 w-full shrink-0 items-center bg-neutral-950 px-6">
+                        <div className="flex-1" />
+                        <TabsList>
+                          <TabsTrigger value="graphs">Canvas</TabsTrigger>
+                          <TabsTrigger value="kanban">Kanban</TabsTrigger>
+                        </TabsList>
+                        <div className="flex flex-1 items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setIsPlanningPanelOpen((v) => !v)}
+                            disabled={!selectedGraphId}
+                            className={cn(
+                              "flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+                              isPlanningPanelOpen
+                                ? "border-indigo-500/50 bg-indigo-950/40 text-indigo-300"
+                                : "border-white/15 bg-neutral-900 text-neutral-200 hover:border-white/25 hover:bg-neutral-800",
+                            )}
                           >
-                            <h2 className="text-sm font-medium text-neutral-200">
-                              {column}
-                            </h2>
-                          </section>
-                        )
-                      )}
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              ) : graphsQuery.isLoading ? null : graphs.length > 0 ? (
-                <SelectGraphEmptyState
-                  onSearchGraphs={() => setIsSearchDialogOpen(true)}
-                />
-              ) : (
-                <GraphsEmptyState
-                  onCreateGraph={() => setIsCreateDialogOpen(true)}
-                />
-              )}
+                            <Sparkles className="size-4 text-indigo-400" />
+                            planning panel
+                          </button>
+                        </div>
+                      </header>
+
+                      <TabsContent value="graphs" className="min-h-0">
+                        <LessonGraphCanvas
+                          key={selectedGraph.id}
+                          graphId={selectedGraph.id}
+                        />
+                      </TabsContent>
+
+                      <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
+                        <KanbanBoard graphId={selectedGraphId!} />
+                      </TabsContent>
+                    </Tabs>
+                  ) : graphsQuery.isLoading ? null : graphs.length > 0 ? (
+                    <SelectGraphEmptyState
+                      onSearchGraphs={() => setIsSearchDialogOpen(true)}
+                    />
+                  ) : (
+                    <GraphsEmptyState
+                      onCreateGraph={() => setIsCreateDialogOpen(true)}
+                    />
+                  )}
+                </div>
+
+                {/* Planning panel */}
+                {isPlanningPanelOpen && selectedGraphId && (
+                  <PlanningPanel
+                    graphId={selectedGraphId}
+                    messages={planningMessages}
+                    onMessagesChange={setPlanningMessages}
+                    onClose={() => setIsPlanningPanelOpen(false)}
+                  />
+                )}
+              </div>
             </SidebarInset>
           </div>
         </div>

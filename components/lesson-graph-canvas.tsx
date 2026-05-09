@@ -183,11 +183,13 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     queryKey: ["graph-nodes", graphId],
     queryFn: () => listGraphNodes(graphId),
     enabled: Boolean(graphId),
+    staleTime: 30_000,
   })
   const graphEdgesQuery = useQuery({
     queryKey: ["graph-edges", graphId],
     queryFn: () => listGraphEdges(graphId),
     enabled: Boolean(graphId),
+    staleTime: 30_000,
   })
   const apiNodes = React.useMemo(
     () => createApiGraphNodes(graphNodesQuery.data ?? []),
@@ -644,10 +646,10 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
 
   React.useEffect(() => {
     setNodes((currentNodes) => {
+      if (currentNodes.length > 0) return currentNodes
       const customNodes = currentNodes.filter((node) =>
         customNodeIds.includes(node.id)
       )
-
       return normalizeGraphNodes([...apiNodes, ...customNodes], apiEdges, scale)
     })
   }, [apiEdges, apiNodes, customNodeIds, scale, setNodes])
