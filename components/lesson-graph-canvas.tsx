@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useRouter } from "next/navigation"
 import * as React from "react"
 import {
   Circle,
@@ -9,6 +10,7 @@ import {
   PencilLine,
   Plus,
   Redo2,
+  Trash2,
   Undo2,
 } from "lucide-react"
 import {
@@ -52,6 +54,7 @@ import {
 import {
   createGraphEdge,
   createGraphNode,
+  deleteGraphNode,
   listGraphEdges,
   listGraphNodes,
   updateGraphNode,
@@ -102,7 +105,9 @@ type NodeActionContextValue = {
   activeNodeId: string | null
   addConnectedNode: (sourceNodeId: string, nodeType: ConnectedNodeType) => void
   closeNodeMenu: () => void
+  deleteNode: (nodeId: string) => void
   openNodeMenu: (nodeId: string) => void
+  openNodePage: (nodeId: string) => void
   renameNode: (nodeId: string, label: string) => void
 }
 
@@ -151,6 +156,7 @@ export function LessonGraphCanvas({ graphId }: { graphId: string }) {
 
 function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const containerRef = React.useRef<HTMLDivElement>(null)
   const nextCustomNodeId = React.useRef(1)
   const { fitView, getNodes, screenToFlowPosition } = useReactFlow<
@@ -218,6 +224,12 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       nodeId: string
       payload: Partial<CreateGraphNodePayload>
     }) => updateGraphNode(graphId, nodeId, payload),
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error))
+    },
+  })
+  const deleteNodeMutation = useMutation({
+    mutationFn: (nodeId: string) => deleteGraphNode(graphId, nodeId),
     onError: (error) => {
       toast.error(getApiErrorMessage(error))
     },
@@ -325,6 +337,78 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       )
     },
     [nodes, setNodes, updateNodeMutation]
+  )
+  const deleteNode = React.useCallback(
+    async (nodeId: string) => {
+      const targetNode = nodes.find((node) => node.id === nodeId)
+
+      if (
+        !targetNode ||
+        (targetNode.type !== "lesson" && targetNode.type !== "topic")
+      ) {
+        return
+      }
+
+      const nodeLabel = getNodeLabel(targetNode)
+      const deleteLabel = targetNode.type === "topic" ? "topic" : "node"
+      const shouldDelete = window.confirm(
+        `Delete ${deleteLabel}${nodeLabel ? ` "${nodeLabel}"` : ""}?`
+      )
+
+      if (!shouldDelete) {
+        return
+      }
+
+      try {
+        await deleteNodeMutation.mutateAsync(nodeId)
+      } catch {
+        return
+      }
+
+      const nextEdges = graphEdges.filter(
+        (edge) => edge.source !== nodeId && edge.target !== nodeId
+      )
+
+      setActiveNodeId(null)
+      setSelectedNodeIds((currentIds) =>
+        currentIds.filter((currentId) => currentId !== nodeId)
+      )
+      setGraphEdges(nextEdges)
+      setNodes((currentNodes) =>
+        normalizeGraphNodes(
+          removeDeletedNodeFromGraphNodes(currentNodes, nodeId),
+          nextEdges,
+          scale
+        )
+      )
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (currentNodes) =>
+        removeDeletedNodeFromApiNodes(currentNodes ?? [], nodeId)
+      )
+      queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (currentEdges) =>
+        (currentEdges ?? []).filter(
+          (edge) =>
+            edge.source_node_id !== nodeId && edge.target_node_id !== nodeId
+        )
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: nodesQueryKey }),
+        queryClient.invalidateQueries({ queryKey: edgesQueryKey }),
+      ])
+      toast.success(
+        `${targetNode.type === "topic" ? "Topic" : "Node"} deleted.`
+      )
+    },
+    [
+      deleteNodeMutation,
+      edgesQueryKey,
+      graphEdges,
+      nodes,
+      nodesQueryKey,
+      queryClient,
+      scale,
+      setGraphEdges,
+      setNodes,
+    ]
   )
   const addConnectedNode = React.useCallback(
     async (sourceNodeId: string, nodeType: ConnectedNodeType) => {
@@ -609,10 +693,15 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       activeNodeId,
       addConnectedNode,
       closeNodeMenu: () => setActiveNodeId(null),
+      deleteNode,
       openNodeMenu: setActiveNodeId,
+      openNodePage: (nodeId: string) => {
+        setActiveNodeId(null)
+        router.push(`/dashboard/graphs/${graphId}/nodes/${nodeId}`)
+      },
       renameNode,
     }),
-    [activeNodeId, addConnectedNode, renameNode]
+    [activeNodeId, addConnectedNode, deleteNode, graphId, renameNode, router]
   )
 
   return (
@@ -929,6 +1018,11 @@ function NodeActionPopover({
 }) {
   const actions = useNodeActions()
   const [labelDraft, setLabelDraft] = React.useState(label)
+  const pointerStartRef = React.useRef<{
+    hasMoved: boolean
+    x: number
+    y: number
+  } | null>(null)
   const isOpen = actions.activeNodeId === nodeId
 
   const handleSubmit = React.useCallback(
@@ -938,15 +1032,77 @@ function NodeActionPopover({
     },
     [actions, labelDraft, nodeId]
   )
+  const openContextMenu = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      setLabelDraft(label)
+      actions.openNodeMenu(nodeId)
+    },
+    [actions, label, nodeId]
+  )
+  const handleNodeClickCapture = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (event.button !== 0 || pointerStartRef.current?.hasMoved) {
+        pointerStartRef.current = null
+        return
+      }
+
+      pointerStartRef.current = null
+      actions.openNodePage(nodeId)
+    },
+    [actions, nodeId]
+  )
+  const handlePointerDown = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        pointerStartRef.current = null
+        return
+      }
+
+      pointerStartRef.current = {
+        hasMoved: false,
+        x: event.clientX,
+        y: event.clientY,
+      }
+    },
+    []
+  )
+  const handlePointerMove = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const pointerStart = pointerStartRef.current
+
+      if (!pointerStart) {
+        return
+      }
+
+      const deltaX = event.clientX - pointerStart.x
+      const deltaY = event.clientY - pointerStart.y
+
+      if (Math.hypot(deltaX, deltaY) > 5) {
+        pointerStart.hasMoved = true
+      }
+    },
+    []
+  )
+  const handleKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault()
+        actions.openNodePage(nodeId)
+      }
+    },
+    [actions, nodeId]
+  )
 
   return (
     <Popover
       open={isOpen}
       onOpenChange={(open) => {
-        if (open) {
-          setLabelDraft(label)
-          actions.openNodeMenu(nodeId)
-        } else {
+        if (!open) {
           actions.closeNodeMenu()
         }
       }}
@@ -955,8 +1111,13 @@ function NodeActionPopover({
         nativeButton={false}
         render={
           <div
-            aria-label="Open node menu"
+            aria-label="Open node page"
             className="cursor-pointer"
+            onClickCapture={handleNodeClickCapture}
+            onContextMenu={openContextMenu}
+            onKeyDown={handleKeyDown}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
             role="button"
             tabIndex={0}
           >
@@ -1030,6 +1191,15 @@ function NodeActionPopover({
                   Add linked topic
                 </Button>
               ) : null}
+              <Button
+              className="justify-start"
+              onClick={() => actions.deleteNode(nodeId)}
+              type="button"
+              variant={"ghost"}
+            >
+              <Trash2 className="size-4" />
+              Delete {nodeType === "topic" ? "topic" : "node"}
+            </Button>
             </div>
           </>
         ) : null}
@@ -1334,6 +1504,47 @@ function upsertById<T extends { id: string }>(items: T[], item: T) {
   }
 
   return [item, ...items]
+}
+
+function removeDeletedNodeFromGraphNodes(
+  nodes: GraphNode[],
+  nodeId: string
+): GraphNode[] {
+  return nodes
+    .filter((node) => node.id !== nodeId)
+    .map((node) => {
+      if (node.type !== "cluster") {
+        return node
+      }
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          nodeIds: node.data.nodeIds?.filter(
+            (currentId) => currentId !== nodeId
+          ),
+        },
+      } satisfies ClusterNode
+    })
+}
+
+function removeDeletedNodeFromApiNodes(
+  nodes: ApiGraphNode[],
+  nodeId: string
+): ApiGraphNode[] {
+  return nodes
+    .filter((node) => node.id !== nodeId)
+    .map((node) => {
+      if (node.node_type !== "cluster") {
+        return node
+      }
+
+      return {
+        ...node,
+        node_ids: node.node_ids.filter((currentId) => currentId !== nodeId),
+      }
+    })
 }
 
 function runGraphPhysics(
