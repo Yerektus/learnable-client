@@ -15,6 +15,7 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { KanbanBoard } from "@/components/kanban-board"
 import { MaterialsTab } from "@/components/materials-tab"
 import { NavUser } from "@/components/nav-user"
 import { SettingsDialog } from "@/components/settings-dialog"
@@ -184,7 +185,7 @@ export default function NodePage() {
                   </CardHeader>
                 </Card>
               ) : node ? (
-                <NodeWorkspace nodeId={nodeId} />
+                <NodeWorkspace nodeId={nodeId} graphId={graphId} />
               ) : null}
             </main>
           </SidebarInset>
@@ -323,7 +324,13 @@ function NodeSidebarGroup({
   )
 }
 
-function NodeWorkspace({ nodeId }: { nodeId: string }) {
+function NodeWorkspace({
+  nodeId,
+  graphId,
+}: {
+  nodeId: string
+  graphId: string
+}) {
   return (
     <Tabs defaultValue="chat" className="grid gap-4">
       <TabsList>
@@ -335,6 +342,7 @@ function NodeWorkspace({ nodeId }: { nodeId: string }) {
           <Paperclip className="size-4" />
           Materials
         </TabsTrigger>
+        <TabsTrigger value="kanban">Kanban</TabsTrigger>
       </TabsList>
 
       <TabsContent value="chat" className="min-h-80">
@@ -350,6 +358,10 @@ function NodeWorkspace({ nodeId }: { nodeId: string }) {
 
       <TabsContent value="materials" className="min-h-0">
         <MaterialsTab nodeId={nodeId} />
+      </TabsContent>
+
+      <TabsContent value="kanban" className="min-h-0 pt-4">
+        <KanbanBoard graphId={graphId} />
       </TabsContent>
     </Tabs>
   )
