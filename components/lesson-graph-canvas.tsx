@@ -725,7 +725,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
           !graphEdgesQuery.isLoading &&
           nodes.length === 0
         }
-        isError={graphNodesQuery.isError || graphEdgesQuery.isError}
+        isError={graphNodesQuery.isError}
         isLoading={graphNodesQuery.isLoading || graphEdgesQuery.isLoading}
       />
       <NodeActionContext.Provider value={nodeActionContextValue}>

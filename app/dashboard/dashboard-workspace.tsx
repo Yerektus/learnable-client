@@ -85,6 +85,7 @@ export function DashboardWorkspace({
       name: graph.name,
       url: "#",
       isActive: graph.id === selectedGraphId,
+      custom_prompt: graph.custom_prompt,
     })) ?? []
   const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
   const trimmedGraphName = graphName.trim()
@@ -414,6 +415,7 @@ function AppSidebar({
     name: string
     url: string
     isActive?: boolean
+    custom_prompt: string | null
   }[]
   isLoadingGraphs: boolean
   onCreateGraph: () => void
