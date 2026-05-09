@@ -224,6 +224,11 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       nodeId: string
       payload: Partial<CreateGraphNodePayload>
     }) => updateGraphNode(graphId, nodeId, payload),
+    onSuccess: (node) => {
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (currentNodes) =>
+        upsertById(currentNodes ?? [], node)
+      )
+    },
     onError: (error) => {
       toast.error(getApiErrorMessage(error))
     },
