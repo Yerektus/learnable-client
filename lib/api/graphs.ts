@@ -43,13 +43,13 @@ export type CreateGraphPayload = {
 
 export type CreateGraphNodePayload = {
   title: string
-  node_type?: GraphNode["node_type"]
+  node_type?: "lesson" | "topic" | "cluster" | "quiz"
   description?: string | null
   position_x: number
   position_y: number
   color?: string | null
   size?: number | null
-  accent?: GraphNode["accent"]
+  accent?: "left" | "right" | null
   node_ids?: string[]
 }
 
@@ -119,26 +119,36 @@ export async function updateGraphNode(
   return data
 }
 
-export async function deleteGraphNode(graphId: string, nodeId: string) {
+export async function deleteGraphNode(
+  graphId: string,
+  nodeId: string,
+): Promise<void> {
   await coreApi.delete(`/api/v1/graphs/${graphId}/nodes/${nodeId}`)
 }
 
-export async function listGraphEdges(graphId: string) {
+export async function listGraphEdges(graphId: string): Promise<GraphEdge[]> {
   const { data } = await coreApi.get<GraphEdge[]>(
-    `/api/v1/graphs/${graphId}/edges`
+    `/api/v1/graphs/${graphId}/edges`,
   )
-
   return data
 }
 
 export async function createGraphEdge(
   graphId: string,
-  payload: CreateGraphEdgePayload
-) {
+  payload: CreateGraphEdgePayload,
+): Promise<GraphEdge> {
   const { data } = await coreApi.post<GraphEdge>(
     `/api/v1/graphs/${graphId}/edges`,
-    payload
+    payload,
   )
-
   return data
 }
+
+export async function deleteGraphEdge(
+  graphId: string,
+  edgeId: string,
+): Promise<void> {
+  await coreApi.delete(`/api/v1/graphs/${graphId}/edges/${edgeId}`)
+}
+
+export const listNodes = listGraphNodes
