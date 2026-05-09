@@ -50,9 +50,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
+  createGraphEdge,
   createGraphNode,
+  listGraphEdges,
   listGraphNodes,
   updateGraphNode,
+  type CreateGraphNodePayload,
+  type GraphEdge as ApiGraphEdge,
   type GraphNode as ApiGraphNode,
 } from "@/lib/api/graphs"
 import { getApiErrorMessage } from "@/lib/api/auth"
@@ -114,11 +118,14 @@ const centerHandleStyle: React.CSSProperties = {
   transform: "translate(-50%, -50%)",
 }
 
-const springStrength = 0.16
 const minimumSpringDistance = 42
 const collisionGap = 10
 const clusterGap = 28
 const clusterInnerPadding = 14
+const edgeSpringStrength = 0.09
+const graphRepulsionStrength = 0.42
+const graphGravityStrength = 0.015
+const maximumPhysicsStep = 24
 
 const clusterGroups: ClusterGroup[] = []
 const quizBadges: {
@@ -146,7 +153,10 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
   const queryClient = useQueryClient()
   const containerRef = React.useRef<HTMLDivElement>(null)
   const nextCustomNodeId = React.useRef(1)
-  const { fitView, screenToFlowPosition } = useReactFlow<GraphNode, Edge>()
+  const { fitView, getNodes, screenToFlowPosition } = useReactFlow<
+    GraphNode,
+    Edge
+  >()
   const [activeTool, setActiveTool] = React.useState<CanvasTool>("cursor")
   const [customNodeIds, setCustomNodeIds] = React.useState<string[]>([])
   const [historyPast, setHistoryPast] = React.useState<GraphSnapshot[]>([])
@@ -168,27 +178,33 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     queryFn: () => listGraphNodes(graphId),
     enabled: Boolean(graphId),
   })
+  const graphEdgesQuery = useQuery({
+    queryKey: ["graph-edges", graphId],
+    queryFn: () => listGraphEdges(graphId),
+    enabled: Boolean(graphId),
+  })
   const apiNodes = React.useMemo(
     () => createApiGraphNodes(graphNodesQuery.data ?? []),
     [graphNodesQuery.data]
+  )
+  const apiEdges = React.useMemo(
+    () => createApiGraphEdges(graphEdgesQuery.data ?? []),
+    [graphEdgesQuery.data]
   )
   const [nodes, setNodes] = useNodesState<GraphNode>([])
   const [graphEdges, setGraphEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [activeNodeId, setActiveNodeId] = React.useState<string | null>(null)
   const isHandTool = activeTool === "hand"
   const isDrawingTool = activeTool === "pen"
-  const queryKey = React.useMemo(() => ["graph-nodes", graphId], [graphId])
+  const nodesQueryKey = React.useMemo(() => ["graph-nodes", graphId], [graphId])
+  const edgesQueryKey = React.useMemo(() => ["graph-edges", graphId], [graphId])
   const createNodeMutation = useMutation({
-    mutationFn: (payload: {
-      title: string
-      position_x: number
-      position_y: number
-    }) => createGraphNode(graphId, payload),
+    mutationFn: (payload: CreateGraphNodePayload) =>
+      createGraphNode(graphId, payload),
     onSuccess: (node) => {
-      queryClient.setQueryData<ApiGraphNode[]>(queryKey, (currentNodes) => [
-        node,
-        ...(currentNodes ?? []),
-      ])
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (currentNodes) =>
+        upsertById(currentNodes ?? [], node)
+      )
     },
     onError: (error) => {
       toast.error(getApiErrorMessage(error))
@@ -200,17 +216,18 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       payload,
     }: {
       nodeId: string
-      payload: {
-        title?: string
-        position_x?: number
-        position_y?: number
-      }
+      payload: Partial<CreateGraphNodePayload>
     }) => updateGraphNode(graphId, nodeId, payload),
-    onSuccess: (updatedNode) => {
-      queryClient.setQueryData<ApiGraphNode[]>(queryKey, (currentNodes) =>
-        (currentNodes ?? []).map((node) =>
-          node.id === updatedNode.id ? updatedNode : node
-        )
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error))
+    },
+  })
+  const createEdgeMutation = useMutation({
+    mutationFn: (payload: { source_node_id: string; target_node_id: string }) =>
+      createGraphEdge(graphId, payload),
+    onSuccess: (edge) => {
+      queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (currentEdges) =>
+        upsertById(currentEdges ?? [], edge)
       )
     },
     onError: (error) => {
@@ -234,20 +251,16 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     }),
     [customNodeIds, graphEdges, nodes]
   )
-  const commitHistory = React.useCallback(() => {
-    setHistoryPast((currentHistory) => [...currentHistory, createSnapshot()])
-    setHistoryFuture([])
-  }, [createSnapshot])
   const addLessonNode = React.useCallback(
     (position: { x: number; y: number }) => {
-      const nodeNumber =
-        nodes.filter((node) => node.type === "lesson").length + 1
       nextCustomNodeId.current += 1
 
       createNodeMutation.mutate({
-        title: `Lec${nodeNumber}`,
+        title: getNextDefaultNodeLabel(nodes, "lesson"),
+        node_type: "lesson",
         position_x: position.x,
         position_y: position.y,
+        size: 56,
       })
     },
     [createNodeMutation, nodes]
@@ -262,34 +275,19 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       return
     }
 
-    commitHistory()
-
     const circle = getContainingCircle(selectedNodes, scale)
-    const id = `cluster-custom-${nextCustomNodeId.current}`
     nextCustomNodeId.current += 1
-    const nextCluster = {
-      id,
-      type: "cluster",
-      position: circle.center,
-      data: {
-        size: circle.size,
-        accent: "right",
-        nodeIds: selectedGroupNodeIds,
-      },
-      draggable: false,
-      selectable: false,
-      style: {
-        width: circle.size,
-        height: circle.size,
-      },
-      zIndex: 0,
-    } satisfies ClusterNode
 
-    setCustomNodeIds((currentIds) => [...currentIds, id])
-    setNodes((currentNodes) =>
-      normalizeGraphNodes([...currentNodes, nextCluster], scale)
-    )
-  }, [commitHistory, nodes, scale, selectedGroupNodeIds, setNodes])
+    createNodeMutation.mutate({
+      title: "Cluster",
+      node_type: "cluster",
+      position_x: circle.center.x,
+      position_y: circle.center.y,
+      size: circle.size,
+      accent: "right",
+      node_ids: selectedGroupNodeIds,
+    })
+  }, [createNodeMutation, nodes, scale, selectedGroupNodeIds])
   const renameNode = React.useCallback(
     (nodeId: string, label: string) => {
       const targetNode = nodes.find((node) => node.id === nodeId)
@@ -336,7 +334,20 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
-      const nodeNumber = nextCustomNodeId.current
+      if (nodeType === "topic" && sourceNode.type !== "lesson") {
+        toast.error("Topics can only be attached to a lecture.")
+        return
+      }
+
+      if (
+        sourceNode.type === "topic" &&
+        nodeType === "lesson" &&
+        hasAttachedLesson(sourceNode.id, nodes, graphEdges)
+      ) {
+        toast.error("This topic is already attached to a lecture.")
+        return
+      }
+
       const connectedCount = graphEdges.filter(
         (edge) => edge.source === sourceNodeId || edge.target === sourceNodeId
       ).length
@@ -351,22 +362,37 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
 
       try {
         const node = await createNodeMutation.mutateAsync({
-          title:
-            nodeType === "topic" ? `Topic ${nodeNumber}` : `Lec${nodeNumber}`,
+          title: getNextDefaultNodeLabel(nodes, nodeType),
+          node_type: nodeType,
           position_x: position.x,
           position_y: position.y,
+          color: nodeType === "topic" ? "#61bd61" : null,
+          size: nodeType === "topic" ? 22 : 56,
         })
+        const edge = await createEdgeMutation.mutateAsync({
+          source_node_id: sourceNodeId,
+          target_node_id: node.id,
+        })
+        const flowEdge = createApiGraphEdge(edge)
 
-        setGraphEdges((currentEdges) => [
-          ...currentEdges,
-          connect(sourceNodeId, node.id),
-        ])
+        setGraphEdges((currentEdges) => [...currentEdges, flowEdge])
+        setNodes((currentNodes) =>
+          runGraphPhysics(currentNodes, [...graphEdges, flowEdge], scale)
+        )
         setActiveNodeId(node.id)
       } catch {
         return
       }
     },
-    [createNodeMutation, graphEdges, nodes, scale, setGraphEdges]
+    [
+      createEdgeMutation,
+      createNodeMutation,
+      graphEdges,
+      nodes,
+      scale,
+      setGraphEdges,
+      setNodes,
+    ]
   )
   const undo = React.useCallback(() => {
     setHistoryPast((currentHistory) => {
@@ -405,33 +431,49 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       setNodes((currentNodes) =>
         normalizeGraphNodes(
           applyNodeChanges(changes, currentNodes) as GraphNode[],
+          graphEdges,
           scale
         )
       )
     },
-    [scale, setNodes]
+    [graphEdges, scale, setNodes]
   )
   const onConnect = React.useCallback(
-    (connection: Connection) => {
-      commitHistory()
-      setGraphEdges((currentEdges) =>
-        addEdge(
-          {
-            ...connection,
-            sourceHandle: "center",
-            targetHandle: "center",
-            type: "straight",
-            selectable: false,
-            style: {
-              stroke: "rgba(230, 230, 230, 0.55)",
-              strokeWidth: 1,
-            },
-          },
-          currentEdges
-        )
+    async (connection: Connection) => {
+      if (!connection.source || !connection.target) {
+        return
+      }
+
+      const sourceNode = nodes.find((node) => node.id === connection.source)
+      const targetNode = nodes.find((node) => node.id === connection.target)
+      const connectionError = getConnectionError(
+        sourceNode,
+        targetNode,
+        graphEdges,
+        nodes
       )
+
+      if (connectionError) {
+        toast.error(connectionError)
+        return
+      }
+
+      try {
+        const edge = await createEdgeMutation.mutateAsync({
+          source_node_id: connection.source,
+          target_node_id: connection.target,
+        })
+        const flowEdge = createApiGraphEdge(edge)
+
+        setGraphEdges((currentEdges) => addEdge(flowEdge, currentEdges))
+        setNodes((currentNodes) =>
+          runGraphPhysics(currentNodes, [...graphEdges, flowEdge], scale)
+        )
+      } catch {
+        return
+      }
     },
-    [commitHistory, setGraphEdges]
+    [createEdgeMutation, graphEdges, nodes, scale, setGraphEdges, setNodes]
   )
   const handleSelectionChange = React.useCallback(
     ({ nodes: selectedNodes }: { nodes: GraphNode[] }) => {
@@ -463,76 +505,57 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       }
 
       setNodes((currentNodes) => {
-        const dragged = {
-          ...(currentNodes.find((node) => node.id === draggedNode.id) ??
-            draggedNode),
-          position: draggedNode.position,
-        }
-        const connectedNodeIds = new Set<string>()
-
-        for (const edge of graphEdges) {
-          if (edge.source === dragged.id) {
-            connectedNodeIds.add(edge.target)
-          }
-
-          if (edge.target === dragged.id) {
-            connectedNodeIds.add(edge.source)
-          }
-        }
-
-        if (connectedNodeIds.size === 0) {
-          return currentNodes
-        }
-
-        const nextNodes = currentNodes.map((node) => {
-          if (node.id === dragged.id) {
-            return dragged
-          }
-
-          if (!connectedNodeIds.has(node.id) || !isForceNode(node)) {
+        const nodesWithDraggedPosition = currentNodes.map((node) => {
+          if (node.id !== draggedNode.id) {
             return node
           }
 
-          const dx = dragged.position.x - node.position.x
-          const dy = dragged.position.y - node.position.y
-          const distance = Math.max(Math.hypot(dx, dy), 1)
-          const restDistance = Math.max(
-            minimumSpringDistance,
-            (getNodeSize(dragged) + getNodeSize(node)) * 0.9
-          )
-          const force = (distance - restDistance) * springStrength
-          const nextX = node.position.x + (dx / distance) * force
-          const nextY = node.position.y + (dy / distance) * force
-
           return {
             ...node,
-            position: {
-              x: nextX,
-              y: nextY,
-            },
-          }
+            position: draggedNode.position,
+          } as GraphNode
         })
 
-        return normalizeGraphNodes(nextNodes, scale, dragged.id)
+        return runGraphPhysics(
+          nodesWithDraggedPosition,
+          graphEdges,
+          scale,
+          draggedNode.id,
+          4
+        )
       })
     },
     [graphEdges, scale, setNodes]
   )
   const handleNodeDragStop = React.useCallback(
     (_event: React.MouseEvent, draggedNode: GraphNode) => {
-      if (draggedNode.type !== "lesson") {
-        return
-      }
+      const currentNodes = (getNodes() as GraphNode[]).map((node) => {
+        if (node.id !== draggedNode.id) {
+          return node
+        }
 
-      updateNodeMutation.mutate({
-        nodeId: draggedNode.id,
-        payload: {
-          position_x: draggedNode.position.x,
-          position_y: draggedNode.position.y,
-        },
+        return {
+          ...node,
+          position: draggedNode.position,
+        } as GraphNode
       })
+      const normalizedNodes = normalizeGraphNodes(
+        currentNodes,
+        graphEdges,
+        scale,
+        draggedNode.id
+      )
+
+      setNodes(normalizedNodes)
+
+      for (const node of normalizedNodes) {
+        updateNodeMutation.mutate({
+          nodeId: node.id,
+          payload: getNodePersistencePayload(node),
+        })
+      }
     },
-    [updateNodeMutation]
+    [getNodes, graphEdges, scale, setNodes, updateNodeMutation]
   )
 
   React.useEffect(() => {
@@ -541,9 +564,13 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         customNodeIds.includes(node.id)
       )
 
-      return normalizeGraphNodes([...apiNodes, ...customNodes], scale)
+      return normalizeGraphNodes([...apiNodes, ...customNodes], apiEdges, scale)
     })
-  }, [apiNodes, customNodeIds, scale, setNodes])
+  }, [apiEdges, apiNodes, customNodeIds, scale, setNodes])
+
+  React.useEffect(() => {
+    setGraphEdges(apiEdges)
+  }, [apiEdges, setGraphEdges])
 
   React.useEffect(() => {
     const element = containerRef.current
@@ -604,9 +631,13 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         onUndo={undo}
       />
       <GraphCanvasStatus
-        isEmpty={!graphNodesQuery.isLoading && nodes.length === 0}
-        isError={graphNodesQuery.isError}
-        isLoading={graphNodesQuery.isLoading}
+        isEmpty={
+          !graphNodesQuery.isLoading &&
+          !graphEdgesQuery.isLoading &&
+          nodes.length === 0
+        }
+        isError={graphNodesQuery.isError || graphEdgesQuery.isError}
+        isLoading={graphNodesQuery.isLoading || graphEdgesQuery.isLoading}
       />
       <NodeActionContext.Provider value={nodeActionContextValue}>
         <ReactFlow
@@ -826,18 +857,34 @@ function TopicNodeView({ data, id }: NodeProps<TopicNode>) {
 
   return (
     <NodeActionPopover label={data.label ?? ""} nodeId={id} nodeType="topic">
-      <div
-        className="relative rounded-full"
-        style={{ width: size, height: size, backgroundColor: data.color }}
-      >
+      <div className="relative" style={{ width: size, height: size }}>
         {data.label ? (
-          <span
-            className="pointer-events-none absolute top-[calc(100%+6px)] left-1/2 z-10 -translate-x-1/2 rounded bg-neutral-950/85 px-1.5 py-0.5 text-[10px] leading-none font-medium whitespace-nowrap text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+          <div
+            className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex items-center gap-1.5 rounded-full bg-neutral-950/90 pr-2 text-[10px] leading-none font-medium whitespace-nowrap text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_8px_18px_rgba(0,0,0,0.35)]"
+            style={{
+              minHeight: size,
+              transform: `translate(${-size / 2}px, -50%)`,
+            }}
             aria-hidden
           >
-            {data.label}
-          </span>
-        ) : null}
+            <span
+              className="shrink-0 rounded-full"
+              style={{
+                width: size,
+                height: size,
+                backgroundColor: data.color,
+              }}
+            />
+            <span className="max-w-28 overflow-hidden text-ellipsis">
+              {data.label}
+            </span>
+          </div>
+        ) : (
+          <div
+            className="rounded-full"
+            style={{ width: size, height: size, backgroundColor: data.color }}
+          />
+        )}
         <FlowHandles />
       </div>
     </NodeActionPopover>
@@ -956,28 +1003,36 @@ function NodeActionPopover({
           </Button>
         </form>
 
-        <Separator className="bg-white/10" />
+        {nodeType !== "quiz" ? (
+          <>
+            <Separator className="bg-white/10" />
 
-        <div className="grid">
-          <Button
-            className="justify-start"
-            onClick={() => actions.addConnectedNode(nodeId, "lesson")}
-            type="button"
-            variant="ghost"
-          >
-            <Plus className="size-4" />
-            Add linked node
-          </Button>
-          <Button
-            className="justify-start"
-            onClick={() => actions.addConnectedNode(nodeId, "topic")}
-            type="button"
-            variant="ghost"
-          >
-            <Circle className="size-4 fill-[#61bd61] text-[#61bd61]" />
-            Add linked topic
-          </Button>
-        </div>
+            <div className="grid">
+              <Button
+                className="justify-start"
+                onClick={() => actions.addConnectedNode(nodeId, "lesson")}
+                type="button"
+                variant="ghost"
+              >
+                <Plus className="size-4" />
+                {nodeType === "topic"
+                  ? "Add linked lecture"
+                  : "Add linked node"}
+              </Button>
+              {nodeType === "lesson" ? (
+                <Button
+                  className="justify-start"
+                  onClick={() => actions.addConnectedNode(nodeId, "topic")}
+                  type="button"
+                  variant="ghost"
+                >
+                  <Circle className="size-4 fill-[#61bd61] text-[#61bd61]" />
+                  Add linked topic
+                </Button>
+              ) : null}
+            </div>
+          </>
+        ) : null}
       </PopoverContent>
     </Popover>
   )
@@ -1040,9 +1095,94 @@ function getFallbackNodeLabel(node: LessonNode | TopicNode | QuizNode) {
   return "Lesson"
 }
 
-function connect(source: string, target: string): Edge {
+function getNextDefaultNodeLabel(
+  nodes: GraphNode[],
+  nodeType: ConnectedNodeType
+) {
+  const prefix = nodeType === "topic" ? "Topic " : "Lec"
+  const matcher = nodeType === "topic" ? /^Topic\s+(\d+)$/ : /^Lec(\d+)$/
+  const usedNumbers = new Set(
+    nodes
+      .filter(
+        (node): node is LessonNode | TopicNode =>
+          node.type === "lesson" || node.type === "topic"
+      )
+      .filter((node) => node.type === nodeType)
+      .map((node) => getNodeLabel(node))
+      .map((label) => label.match(matcher)?.[1])
+      .filter((value): value is string => Boolean(value))
+      .map(Number)
+  )
+  let nextNumber = 1
+
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber += 1
+  }
+
+  return `${prefix}${nextNumber}`
+}
+
+function getConnectionError(
+  sourceNode: GraphNode | undefined,
+  targetNode: GraphNode | undefined,
+  edges: Edge[],
+  nodes: GraphNode[]
+) {
+  if (!sourceNode || !targetNode) {
+    return "Could not create this connection."
+  }
+
+  if (sourceNode.id === targetNode.id) {
+    return "Node cannot be connected to itself."
+  }
+
+  if (sourceNode.type === "topic" && targetNode.type === "topic") {
+    return "Topics can only be attached to lectures."
+  }
+
+  const topicNode =
+    sourceNode.type === "topic"
+      ? sourceNode
+      : targetNode.type === "topic"
+        ? targetNode
+        : null
+  const lessonNode =
+    sourceNode.type === "lesson"
+      ? sourceNode
+      : targetNode.type === "lesson"
+        ? targetNode
+        : null
+
+  if (topicNode && !lessonNode) {
+    return "Topics can only be attached to lectures."
+  }
+
+  if (topicNode && hasAttachedLesson(topicNode.id, nodes, edges)) {
+    return "This topic is already attached to a lecture."
+  }
+
+  return null
+}
+
+function hasAttachedLesson(topicId: string, nodes: GraphNode[], edges: Edge[]) {
+  const nodeLookup = new Map(nodes.map((node) => [node.id, node]))
+
+  return edges.some((edge) => {
+    if (edge.source === topicId) {
+      return nodeLookup.get(edge.target)?.type === "lesson"
+    }
+
+    if (edge.target === topicId) {
+      return nodeLookup.get(edge.source)?.type === "lesson"
+    }
+
+    return false
+  })
+}
+
+function createFlowEdge(id: string, source: string, target: string): Edge {
   return {
-    id: `${source}-${target}`,
+    id,
     source,
     target,
     sourceHandle: "center",
@@ -1056,17 +1196,79 @@ function connect(source: string, target: string): Edge {
   }
 }
 
+function createApiGraphEdge(edge: ApiGraphEdge): Edge {
+  return createFlowEdge(edge.id, edge.source_node_id, edge.target_node_id)
+}
+
+function createApiGraphEdges(edges: ApiGraphEdge[]): Edge[] {
+  return edges.map(createApiGraphEdge)
+}
+
 function createApiGraphNodes(nodes: ApiGraphNode[]): GraphNode[] {
   return nodes.map((node) => {
-    const size = 56
+    const nodeType = node.node_type ?? "lesson"
+    const size = node.size ?? (nodeType === "topic" ? 22 : 56)
+    const position = {
+      x: node.position_x,
+      y: node.position_y,
+    }
+
+    if (nodeType === "topic") {
+      return {
+        id: node.id,
+        type: "topic",
+        position,
+        data: {
+          color: node.color ?? "#61bd61",
+          label: node.title,
+          size,
+        },
+        style: {
+          width: size,
+          height: size,
+        },
+        zIndex: 2,
+      } satisfies TopicNode
+    }
+
+    if (nodeType === "cluster") {
+      return {
+        id: node.id,
+        type: "cluster",
+        position,
+        data: {
+          size,
+          accent: node.accent ?? "right",
+          nodeIds: node.node_ids,
+        },
+        draggable: false,
+        selectable: false,
+        style: {
+          width: size,
+          height: size,
+        },
+        zIndex: 0,
+      } satisfies ClusterNode
+    }
+
+    if (nodeType === "quiz") {
+      return {
+        id: node.id,
+        type: "quiz",
+        position,
+        data: {
+          label: node.title,
+        },
+        draggable: false,
+        style: { width: "max-content" },
+        zIndex: 3,
+      } satisfies QuizNode
+    }
 
     return {
       id: node.id,
       type: "lesson",
-      position: {
-        x: node.position_x,
-        y: node.position_y,
-      },
+      position,
       data: {
         label: node.title,
         size,
@@ -1080,8 +1282,297 @@ function createApiGraphNodes(nodes: ApiGraphNode[]): GraphNode[] {
   })
 }
 
+function getNodePersistencePayload(
+  node: GraphNode
+): Partial<CreateGraphNodePayload> {
+  if (node.type === "topic") {
+    return {
+      title: node.data.label ?? "Topic",
+      node_type: "topic",
+      position_x: node.position.x,
+      position_y: node.position.y,
+      color: node.data.color,
+      size: node.data.size ?? 22,
+    }
+  }
+
+  if (node.type === "cluster") {
+    return {
+      title: "Cluster",
+      node_type: "cluster",
+      position_x: node.position.x,
+      position_y: node.position.y,
+      size: node.data.size,
+      accent: node.data.accent,
+      node_ids: node.data.nodeIds ?? [],
+    }
+  }
+
+  if (node.type === "quiz") {
+    return {
+      title: node.data.label,
+      node_type: "quiz",
+      position_x: node.position.x,
+      position_y: node.position.y,
+    }
+  }
+
+  return {
+    title: node.data.label,
+    node_type: "lesson",
+    position_x: node.position.x,
+    position_y: node.position.y,
+    size: node.data.size,
+  }
+}
+
+function upsertById<T extends { id: string }>(items: T[], item: T) {
+  if (items.some((candidate) => candidate.id === item.id)) {
+    return items.map((candidate) =>
+      candidate.id === item.id ? item : candidate
+    )
+  }
+
+  return [item, ...items]
+}
+
+function runGraphPhysics(
+  nodes: GraphNode[],
+  edges: Edge[],
+  scale: number,
+  lockedNodeId?: string,
+  iterations = 12
+) {
+  if (nodes.length < 2) {
+    return normalizeGraphNodes(nodes, edges, scale, lockedNodeId)
+  }
+
+  let simulatedNodes = normalizeGraphNodes(nodes, edges, scale, lockedNodeId)
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const nodeLookup = new Map(
+      simulatedNodes.map((node) => [node.id, node] as const)
+    )
+    const positions = new Map(
+      simulatedNodes.map((node) => [node.id, { ...node.position }] as const)
+    )
+    const physicsNodes = simulatedNodes.filter(isPhysicsNode)
+    const center = getPhysicsCenter(physicsNodes)
+
+    for (const edge of edges) {
+      const sourceNode = nodeLookup.get(edge.source)
+      const targetNode = nodeLookup.get(edge.target)
+      const sourcePosition = positions.get(edge.source)
+      const targetPosition = positions.get(edge.target)
+
+      if (
+        !sourceNode ||
+        !targetNode ||
+        !sourcePosition ||
+        !targetPosition ||
+        !isPhysicsNode(sourceNode) ||
+        !isPhysicsNode(targetNode)
+      ) {
+        continue
+      }
+
+      const dx = targetPosition.x - sourcePosition.x
+      const dy = targetPosition.y - sourcePosition.y
+      const distance = Math.max(Math.hypot(dx, dy), 0.001)
+      const restDistance = getEdgeRestDistance(sourceNode, targetNode, scale)
+      const displacement = (distance - restDistance) * edgeSpringStrength
+      const stepX = clampPhysicsStep((dx / distance) * displacement, scale)
+      const stepY = clampPhysicsStep((dy / distance) * displacement, scale)
+      const sourceLocked = sourceNode.id === lockedNodeId
+      const targetLocked = targetNode.id === lockedNodeId
+
+      if (sourceLocked && !targetLocked) {
+        movePhysicsPosition(positions, targetNode.id, -stepX, -stepY, scale)
+      } else if (targetLocked && !sourceLocked) {
+        movePhysicsPosition(positions, sourceNode.id, stepX, stepY, scale)
+      } else if (!sourceLocked && !targetLocked) {
+        movePhysicsPosition(
+          positions,
+          sourceNode.id,
+          stepX / 2,
+          stepY / 2,
+          scale
+        )
+        movePhysicsPosition(
+          positions,
+          targetNode.id,
+          -stepX / 2,
+          -stepY / 2,
+          scale
+        )
+      }
+    }
+
+    for (let index = 0; index < physicsNodes.length; index += 1) {
+      for (
+        let nextIndex = index + 1;
+        nextIndex < physicsNodes.length;
+        nextIndex += 1
+      ) {
+        const first = physicsNodes[index]
+        const second = physicsNodes[nextIndex]
+        const firstPosition = positions.get(first.id)
+        const secondPosition = positions.get(second.id)
+
+        if (!firstPosition || !secondPosition) {
+          continue
+        }
+
+        const dx = secondPosition.x - firstPosition.x
+        const dy = secondPosition.y - firstPosition.y
+        const distance = Math.max(Math.hypot(dx, dy), 0.001)
+        const minimumDistance =
+          getNodeSize(first) / 2 +
+          getNodeSize(second) / 2 +
+          getRepulsionDistance(first, second, scale)
+
+        if (distance >= minimumDistance) {
+          continue
+        }
+
+        const push =
+          (minimumDistance - distance) * graphRepulsionStrength + 0.5 * scale
+        const stepX = clampPhysicsStep((dx / distance) * push, scale)
+        const stepY = clampPhysicsStep((dy / distance) * push, scale)
+        const firstLocked = first.id === lockedNodeId
+        const secondLocked = second.id === lockedNodeId
+
+        if (firstLocked && !secondLocked) {
+          movePhysicsPosition(positions, second.id, stepX, stepY, scale)
+        } else if (secondLocked && !firstLocked) {
+          movePhysicsPosition(positions, first.id, -stepX, -stepY, scale)
+        } else if (!firstLocked && !secondLocked) {
+          movePhysicsPosition(
+            positions,
+            first.id,
+            -stepX / 2,
+            -stepY / 2,
+            scale
+          )
+          movePhysicsPosition(positions, second.id, stepX / 2, stepY / 2, scale)
+        }
+      }
+    }
+
+    for (const node of physicsNodes) {
+      if (node.id === lockedNodeId) {
+        continue
+      }
+
+      const position = positions.get(node.id)
+
+      if (!position) {
+        continue
+      }
+
+      movePhysicsPosition(
+        positions,
+        node.id,
+        (center.x - position.x) * graphGravityStrength,
+        (center.y - position.y) * graphGravityStrength,
+        scale
+      )
+    }
+
+    simulatedNodes = normalizeGraphNodes(
+      simulatedNodes.map((node) => ({
+        ...node,
+        position: positions.get(node.id) ?? node.position,
+      })),
+      edges,
+      scale,
+      lockedNodeId
+    )
+  }
+
+  return simulatedNodes
+}
+
+function getPhysicsCenter(nodes: GraphNode[]) {
+  if (nodes.length === 0) {
+    return { x: 0, y: 0 }
+  }
+
+  const total = nodes.reduce(
+    (result, node) => ({
+      x: result.x + node.position.x,
+      y: result.y + node.position.y,
+    }),
+    { x: 0, y: 0 }
+  )
+
+  return {
+    x: total.x / nodes.length,
+    y: total.y / nodes.length,
+  }
+}
+
+function movePhysicsPosition(
+  positions: Map<string, { x: number; y: number }>,
+  nodeId: string,
+  dx: number,
+  dy: number,
+  scale: number
+) {
+  const position = positions.get(nodeId)
+
+  if (!position) {
+    return
+  }
+
+  position.x += clampPhysicsStep(dx, scale)
+  position.y += clampPhysicsStep(dy, scale)
+}
+
+function clampPhysicsStep(value: number, scale: number) {
+  const limit = maximumPhysicsStep * scale
+
+  return Math.max(-limit, Math.min(limit, value))
+}
+
+function getEdgeRestDistance(
+  sourceNode: GraphNode,
+  targetNode: GraphNode,
+  scale: number
+) {
+  const sourceSize = getNodeSize(sourceNode)
+  const targetSize = getNodeSize(targetNode)
+  const isLessonTopicLink =
+    (sourceNode.type === "lesson" && targetNode.type === "topic") ||
+    (sourceNode.type === "topic" && targetNode.type === "lesson")
+  const baseDistance =
+    sourceNode.type === "topic" || targetNode.type === "topic"
+      ? isLessonTopicLink
+        ? 48
+        : 78
+      : 128
+
+  return Math.max(
+    minimumSpringDistance,
+    (sourceSize + targetSize) / 2 + baseDistance * scale
+  )
+}
+
+function getRepulsionDistance(
+  firstNode: GraphNode,
+  secondNode: GraphNode,
+  scale: number
+) {
+  if (firstNode.type === "topic" || secondNode.type === "topic") {
+    return 46 * scale
+  }
+
+  return 72 * scale
+}
+
 function normalizeGraphNodes(
   nodes: GraphNode[],
+  edges: Edge[],
   scale: number,
   lockedNodeId?: string
 ) {
@@ -1092,6 +1583,7 @@ function normalizeGraphNodes(
   )
   const containedNodes = containNodesInFixedClusters(
     applyClusterBounds(collisionResolvedNodes),
+    edges,
     scale
   )
   const separatedNodes = separateOverlappingClusters(
@@ -1101,6 +1593,7 @@ function normalizeGraphNodes(
   )
   const normalizedNodes = containNodesInFixedClusters(
     applyClusterBounds(separatedNodes),
+    edges,
     scale
   )
 
@@ -1534,7 +2027,11 @@ function applyClusterBounds(nodes: GraphNode[]) {
   })
 }
 
-function containNodesInFixedClusters(nodes: GraphNode[], scale: number) {
+function containNodesInFixedClusters(
+  nodes: GraphNode[],
+  edges: Edge[],
+  scale: number
+) {
   const nodeLookup = new Map(nodes.map((node) => [node.id, node]))
   const positions = new Map(
     nodes.map((node) => [node.id, { ...node.position }])
@@ -1548,8 +2045,13 @@ function containNodesInFixedClusters(nodes: GraphNode[], scale: number) {
     }
 
     const maxRadius = cluster.data.size / 2 - clusterInnerPadding * scale
+    const constrainedNodeIds = getClusterConstrainedNodeIds(
+      group,
+      nodeLookup,
+      edges
+    )
 
-    for (const nodeId of group.nodeIds) {
+    for (const nodeId of constrainedNodeIds) {
       const node = nodeLookup.get(nodeId)
       const position = positions.get(nodeId)
 
@@ -1620,6 +2122,44 @@ function getClusterGroups(nodes: GraphNode[]): ClusterGroup[] {
     }))
 
   return [...clusterGroups, ...customClusterGroups]
+}
+
+function getClusterConstrainedNodeIds(
+  group: ClusterGroup,
+  nodeLookup: Map<string, GraphNode>,
+  edges: Edge[]
+) {
+  const constrainedNodeIds = new Set(group.nodeIds)
+  const groupLessonIds = new Set(
+    group.nodeIds.filter((nodeId) => nodeLookup.get(nodeId)?.type === "lesson")
+  )
+
+  if (groupLessonIds.size === 0) {
+    return [...constrainedNodeIds]
+  }
+
+  for (const edge of edges) {
+    const sourceNode = nodeLookup.get(edge.source)
+    const targetNode = nodeLookup.get(edge.target)
+
+    if (
+      sourceNode?.type === "lesson" &&
+      groupLessonIds.has(sourceNode.id) &&
+      targetNode?.type === "topic"
+    ) {
+      constrainedNodeIds.add(targetNode.id)
+    }
+
+    if (
+      targetNode?.type === "lesson" &&
+      groupLessonIds.has(targetNode.id) &&
+      sourceNode?.type === "topic"
+    ) {
+      constrainedNodeIds.add(sourceNode.id)
+    }
+  }
+
+  return [...constrainedNodeIds]
 }
 
 function getClusterGroupBoundsFromPositions(
@@ -1714,11 +2254,15 @@ function translateNodes(
 }
 
 function isForceNode(node: GraphNode) {
+  return isPhysicsNode(node)
+}
+
+function isPhysicsNode(node: GraphNode): node is LessonNode | TopicNode {
   return node.type === "lesson" || node.type === "topic"
 }
 
 function isCollisionNode(node: GraphNode) {
-  return node.type === "lesson" || node.type === "topic"
+  return isPhysicsNode(node)
 }
 
 function getNodeSize(node: GraphNode) {

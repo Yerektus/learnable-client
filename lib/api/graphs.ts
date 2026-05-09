@@ -14,9 +14,24 @@ export type GraphNode = {
   owner_id: string
   graph_id: string
   title: string
+  node_type: "lesson" | "topic" | "cluster" | "quiz"
   description: string | null
   position_x: number
   position_y: number
+  color: string | null
+  size: number | null
+  accent: "left" | "right" | null
+  node_ids: string[]
+  created_at: string
+  updated_at: string
+}
+
+export type GraphEdge = {
+  id: string
+  owner_id: string
+  graph_id: string
+  source_node_id: string
+  target_node_id: string
   created_at: string
   updated_at: string
 }
@@ -28,12 +43,22 @@ export type CreateGraphPayload = {
 
 export type CreateGraphNodePayload = {
   title: string
+  node_type?: GraphNode["node_type"]
   description?: string | null
   position_x: number
   position_y: number
+  color?: string | null
+  size?: number | null
+  accent?: GraphNode["accent"]
+  node_ids?: string[]
 }
 
 export type UpdateGraphNodePayload = Partial<CreateGraphNodePayload>
+
+export type CreateGraphEdgePayload = {
+  source_node_id: string
+  target_node_id: string
+}
 
 export async function listGraphs() {
   const { data } = await coreApi.get<Graph[]>("/api/v1/graphs")
@@ -74,6 +99,26 @@ export async function updateGraphNode(
 ) {
   const { data } = await coreApi.patch<GraphNode>(
     `/api/v1/graphs/${graphId}/nodes/${nodeId}`,
+    payload
+  )
+
+  return data
+}
+
+export async function listGraphEdges(graphId: string) {
+  const { data } = await coreApi.get<GraphEdge[]>(
+    `/api/v1/graphs/${graphId}/edges`
+  )
+
+  return data
+}
+
+export async function createGraphEdge(
+  graphId: string,
+  payload: CreateGraphEdgePayload
+) {
+  const { data } = await coreApi.post<GraphEdge>(
+    `/api/v1/graphs/${graphId}/edges`,
     payload
   )
 
