@@ -5,8 +5,15 @@ export type Graph = {
   owner_id: string
   name: string
   description: string | null
+  custom_prompt: string | null
   created_at: string
   updated_at: string
+}
+
+export type UpdateGraphPayload = {
+  name?: string
+  description?: string | null
+  custom_prompt?: string | null
 }
 
 export type GraphNode = {
@@ -74,6 +81,12 @@ export async function createGraph(payload: CreateGraphPayload) {
 
 export async function getGraph(graphId: string) {
   const { data } = await coreApi.get<Graph>(`/api/v1/graphs/${graphId}`)
+
+  return data
+}
+
+export async function updateGraph(graphId: string, payload: UpdateGraphPayload) {
+  const { data } = await coreApi.patch<Graph>(`/api/v1/graphs/${graphId}`, payload)
 
   return data
 }

@@ -54,6 +54,7 @@ import {
 import {
   createGraphEdge,
   createGraphNode,
+  deleteGraphEdge,
   deleteGraphNode,
   listGraphEdges,
   listGraphNodes,
@@ -95,10 +96,11 @@ type GraphNode = LessonNode | TopicNode | ClusterNode | QuizNode
 type CanvasTool = "cursor" | "hand" | "pen"
 type ConnectedNodeType = "lesson" | "topic"
 
-type GraphSnapshot = {
-  nodes: GraphNode[]
-  edges: Edge[]
-  customNodeIds: string[]
+const MAX_HISTORY = 20
+
+type ApiSnapshot = {
+  nodes: ApiGraphNode[]
+  edges: ApiGraphEdge[]
 }
 
 type NodeActionContextValue = {
@@ -165,8 +167,9 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
   >()
   const [activeTool, setActiveTool] = React.useState<CanvasTool>("cursor")
   const [customNodeIds, setCustomNodeIds] = React.useState<string[]>([])
-  const [historyPast, setHistoryPast] = React.useState<GraphSnapshot[]>([])
-  const [historyFuture, setHistoryFuture] = React.useState<GraphSnapshot[]>([])
+  const [undoStack, setUndoStack] = React.useState<ApiSnapshot[]>([])
+  const [redoStack, setRedoStack] = React.useState<ApiSnapshot[]>([])
+  const isApplyingRef = React.useRef(false)
   const [selectedNodeIds, setSelectedNodeIds] = React.useState<string[]>([])
   const [containerSize, setContainerSize] = React.useState({
     width: 1180,
@@ -224,6 +227,11 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       nodeId: string
       payload: Partial<CreateGraphNodePayload>
     }) => updateGraphNode(graphId, nodeId, payload),
+    onSuccess: (node) => {
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+        upsertById(prev ?? [], node)
+      )
+    },
     onError: (error) => {
       toast.error(getApiErrorMessage(error))
     },
@@ -255,27 +263,140 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       }),
     [nodes, selectedNodeIds]
   )
-  const createSnapshot = React.useCallback(
-    (): GraphSnapshot => ({
-      nodes,
-      edges: graphEdges,
-      customNodeIds,
+  const captureSnapshot = React.useCallback(
+    (): ApiSnapshot => ({
+      nodes: queryClient.getQueryData<ApiGraphNode[]>(nodesQueryKey) ?? [],
+      edges: queryClient.getQueryData<ApiGraphEdge[]>(edgesQueryKey) ?? [],
     }),
-    [customNodeIds, graphEdges, nodes]
+    [queryClient, nodesQueryKey, edgesQueryKey]
   )
+
+  const pushHistory = React.useCallback(() => {
+    const snapshot = captureSnapshot()
+    setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+    setRedoStack([])
+  }, [captureSnapshot])
+
+  const applyApiSnapshot = React.useCallback(
+    async (target: ApiSnapshot): Promise<void> => {
+      const current = captureSnapshot()
+
+      const edgesToDelete = current.edges.filter(
+        (e) => !target.edges.some((t) => t.id === e.id)
+      )
+      const nodesToDelete = current.nodes.filter(
+        (n) => !target.nodes.some((t) => t.id === n.id)
+      )
+      const nodesToCreate = target.nodes.filter(
+        (t) => !current.nodes.some((n) => n.id === t.id)
+      )
+      const edgesToCreate = target.edges.filter(
+        (t) => !current.edges.some((e) => e.id === t.id)
+      )
+      const nodesToUpdate = target.nodes.filter((t) => {
+        const curr = current.nodes.find((n) => n.id === t.id)
+        return (
+          curr !== undefined &&
+          (curr.position_x !== t.position_x ||
+            curr.position_y !== t.position_y ||
+            curr.title !== t.title)
+        )
+      })
+
+      // id mapping: old snapshot id → newly created server id
+      const idMap = new Map<string, string>()
+
+      try {
+        for (const edge of edgesToDelete) {
+          await deleteGraphEdge(graphId, edge.id)
+          queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (prev) =>
+            (prev ?? []).filter((e) => e.id !== edge.id)
+          )
+        }
+
+        for (const node of nodesToDelete) {
+          await deleteGraphNode(graphId, node.id)
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            (prev ?? []).filter((n) => n.id !== node.id)
+          )
+        }
+
+        for (const node of nodesToCreate) {
+          const created = await createGraphNode(graphId, {
+            title: node.title,
+            node_type: node.node_type,
+            position_x: node.position_x,
+            position_y: node.position_y,
+            color: node.color,
+            size: node.size,
+            accent: node.accent,
+            node_ids: node.node_ids,
+          })
+          idMap.set(node.id, created.id)
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            upsertById(prev ?? [], created)
+          )
+        }
+
+        for (const edge of edgesToCreate) {
+          const srcId = idMap.get(edge.source_node_id) ?? edge.source_node_id
+          const tgtId = idMap.get(edge.target_node_id) ?? edge.target_node_id
+          const created = await createGraphEdge(graphId, {
+            source_node_id: srcId,
+            target_node_id: tgtId,
+          })
+          queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (prev) =>
+            upsertById(prev ?? [], created)
+          )
+        }
+
+        for (const node of nodesToUpdate) {
+          const updated = await updateGraphNode(graphId, node.id, {
+            title: node.title,
+            node_type: node.node_type,
+            position_x: node.position_x,
+            position_y: node.position_y,
+            color: node.color,
+            size: node.size,
+            accent: node.accent,
+            node_ids: node.node_ids,
+          })
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            upsertById(prev ?? [], updated)
+          )
+        }
+      } catch (error) {
+        toast.error(getApiErrorMessage(error))
+      }
+    },
+    [captureSnapshot, graphId, queryClient, nodesQueryKey, edgesQueryKey]
+  )
+
   const addLessonNode = React.useCallback(
     (position: { x: number; y: number }) => {
+      const snapshot = captureSnapshot()
       nextCustomNodeId.current += 1
 
-      createNodeMutation.mutate({
-        title: getNextDefaultNodeLabel(nodes, "lesson"),
-        node_type: "lesson",
-        position_x: position.x,
-        position_y: position.y,
-        size: 56,
-      })
+      createNodeMutation.mutate(
+        {
+          title: getNextDefaultNodeLabel(nodes, "lesson"),
+          node_type: "lesson",
+          position_x: position.x,
+          position_y: position.y,
+          size: 56,
+        },
+        {
+          onSuccess: () => {
+            setUndoStack((prev) => [
+              ...prev.slice(-(MAX_HISTORY - 1)),
+              snapshot,
+            ])
+            setRedoStack([])
+          },
+        }
+      )
     },
-    [createNodeMutation, nodes]
+    [captureSnapshot, createNodeMutation, nodes]
   )
   const addClusterAroundSelection = React.useCallback(() => {
     const selectedNodes = nodes.filter(
@@ -287,19 +408,31 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       return
     }
 
+    const snapshot = captureSnapshot()
     const circle = getContainingCircle(selectedNodes, scale)
     nextCustomNodeId.current += 1
 
-    createNodeMutation.mutate({
-      title: "Cluster",
-      node_type: "cluster",
-      position_x: circle.center.x,
-      position_y: circle.center.y,
-      size: circle.size,
-      accent: "right",
-      node_ids: selectedGroupNodeIds,
-    })
-  }, [createNodeMutation, nodes, scale, selectedGroupNodeIds])
+    createNodeMutation.mutate(
+      {
+        title: "Cluster",
+        node_type: "cluster",
+        position_x: circle.center.x,
+        position_y: circle.center.y,
+        size: circle.size,
+        accent: "right",
+        node_ids: selectedGroupNodeIds,
+      },
+      {
+        onSuccess: () => {
+          setUndoStack((prev) => [
+            ...prev.slice(-(MAX_HISTORY - 1)),
+            snapshot,
+          ])
+          setRedoStack([])
+        },
+      }
+    )
+  }, [captureSnapshot, createNodeMutation, nodes, scale, selectedGroupNodeIds])
   const renameNode = React.useCallback(
     (nodeId: string, label: string) => {
       const targetNode = nodes.find((node) => node.id === nodeId)
@@ -359,6 +492,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
+      pushHistory()
+
       try {
         await deleteNodeMutation.mutateAsync(nodeId)
       } catch {
@@ -404,6 +539,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       graphEdges,
       nodes,
       nodesQueryKey,
+      pushHistory,
       queryClient,
       scale,
       setGraphEdges,
@@ -442,6 +578,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         y: sourceNode.position.y + Math.sin(angle) * distance,
       }
 
+      const snapshot = captureSnapshot()
       nextCustomNodeId.current += 1
 
       try {
@@ -459,6 +596,10 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         })
         const flowEdge = createApiGraphEdge(edge)
 
+        // Both mutations succeeded — push "before" snapshot to history
+        setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+        setRedoStack([])
+
         setGraphEdges((currentEdges) => [...currentEdges, flowEdge])
         setNodes((currentNodes) =>
           runGraphPhysics(currentNodes, [...graphEdges, flowEdge], scale)
@@ -469,6 +610,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       }
     },
     [
+      captureSnapshot,
       createEdgeMutation,
       createNodeMutation,
       graphEdges,
@@ -478,38 +620,69 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       setNodes,
     ]
   )
-  const undo = React.useCallback(() => {
-    setHistoryPast((currentHistory) => {
-      const previousSnapshot = currentHistory.at(-1)
+  const undo = React.useCallback(async () => {
+    if (isApplyingRef.current) return
+    if (
+      createNodeMutation.isPending ||
+      updateNodeMutation.isPending ||
+      deleteNodeMutation.isPending ||
+      createEdgeMutation.isPending
+    )
+      return
 
-      if (!previousSnapshot) {
-        return currentHistory
-      }
+    const target = undoStack.at(-1)
+    if (!target) return
 
-      setHistoryFuture((currentFuture) => [createSnapshot(), ...currentFuture])
-      setNodes(previousSnapshot.nodes)
-      setGraphEdges(previousSnapshot.edges)
-      setCustomNodeIds(previousSnapshot.customNodeIds)
+    isApplyingRef.current = true
+    try {
+      const before = captureSnapshot()
+      setUndoStack((prev) => prev.slice(0, -1))
+      setRedoStack((prev) => [before, ...prev])
+      await applyApiSnapshot(target)
+    } finally {
+      isApplyingRef.current = false
+    }
+  }, [
+    undoStack,
+    captureSnapshot,
+    applyApiSnapshot,
+    createNodeMutation.isPending,
+    updateNodeMutation.isPending,
+    deleteNodeMutation.isPending,
+    createEdgeMutation.isPending,
+  ])
 
-      return currentHistory.slice(0, -1)
-    })
-  }, [createSnapshot, setGraphEdges, setNodes])
-  const redo = React.useCallback(() => {
-    setHistoryFuture((currentFuture) => {
-      const nextSnapshot = currentFuture[0]
+  const redo = React.useCallback(async () => {
+    if (isApplyingRef.current) return
+    if (
+      createNodeMutation.isPending ||
+      updateNodeMutation.isPending ||
+      deleteNodeMutation.isPending ||
+      createEdgeMutation.isPending
+    )
+      return
 
-      if (!nextSnapshot) {
-        return currentFuture
-      }
+    const target = redoStack[0]
+    if (!target) return
 
-      setHistoryPast((currentHistory) => [...currentHistory, createSnapshot()])
-      setNodes(nextSnapshot.nodes)
-      setGraphEdges(nextSnapshot.edges)
-      setCustomNodeIds(nextSnapshot.customNodeIds)
-
-      return currentFuture.slice(1)
-    })
-  }, [createSnapshot, setGraphEdges, setNodes])
+    isApplyingRef.current = true
+    try {
+      const before = captureSnapshot()
+      setRedoStack((prev) => prev.slice(1))
+      setUndoStack((prev) => [...prev, before])
+      await applyApiSnapshot(target)
+    } finally {
+      isApplyingRef.current = false
+    }
+  }, [
+    redoStack,
+    captureSnapshot,
+    applyApiSnapshot,
+    createNodeMutation.isPending,
+    updateNodeMutation.isPending,
+    deleteNodeMutation.isPending,
+    createEdgeMutation.isPending,
+  ])
   const handleNodesChange = React.useCallback(
     (changes: NodeChange<GraphNode>[]) => {
       setNodes((currentNodes) =>
@@ -542,12 +715,18 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
+      const snapshot = captureSnapshot()
+
       try {
         const edge = await createEdgeMutation.mutateAsync({
           source_node_id: connection.source,
           target_node_id: connection.target,
         })
         const flowEdge = createApiGraphEdge(edge)
+
+        // Mutation succeeded — push "before" snapshot to history
+        setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+        setRedoStack([])
 
         setGraphEdges((currentEdges) => addEdge(flowEdge, currentEdges))
         setNodes((currentNodes) =>
@@ -557,7 +736,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
     },
-    [createEdgeMutation, graphEdges, nodes, scale, setGraphEdges, setNodes]
+    [captureSnapshot, createEdgeMutation, graphEdges, nodes, scale, setGraphEdges, setNodes]
   )
   const handleSelectionChange = React.useCallback(
     ({ nodes: selectedNodes }: { nodes: GraphNode[] }) => {
@@ -630,6 +809,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         draggedNode.id
       )
 
+      pushHistory()
       setNodes(normalizedNodes)
 
       for (const node of normalizedNodes) {
@@ -639,7 +819,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         })
       }
     },
-    [getNodes, graphEdges, scale, setNodes, updateNodeMutation]
+    [getNodes, graphEdges, pushHistory, scale, setNodes, updateNodeMutation]
   )
 
   React.useEffect(() => {
@@ -688,6 +868,21 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     })
   }, [containerSize.height, containerSize.width, fitView, nodes.length])
 
+  React.useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!event.ctrlKey && !event.metaKey) return
+      if (event.key === "z" && !event.shiftKey) {
+        event.preventDefault()
+        void undo()
+      } else if (event.key === "y" || (event.key === "z" && event.shiftKey)) {
+        event.preventDefault()
+        void redo()
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [undo, redo])
+
   const nodeActionContextValue = React.useMemo(
     () => ({
       activeNodeId,
@@ -712,8 +907,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       <GraphCanvasToolbar
         activeTool={activeTool}
         canCreateCircle={selectedGroupNodeIds.length > 0}
-        canRedo={historyFuture.length > 0}
-        canUndo={historyPast.length > 0}
+        canRedo={redoStack.length > 0}
+        canUndo={undoStack.length > 0}
         onCreateCircle={addClusterAroundSelection}
         onRedo={redo}
         onToolChange={setActiveTool}
@@ -725,7 +920,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
           !graphEdgesQuery.isLoading &&
           nodes.length === 0
         }
-        isError={graphNodesQuery.isError || graphEdgesQuery.isError}
+        isError={graphNodesQuery.isError}
         isLoading={graphNodesQuery.isLoading || graphEdgesQuery.isLoading}
       />
       <NodeActionContext.Provider value={nodeActionContextValue}>
