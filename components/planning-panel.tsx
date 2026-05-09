@@ -88,6 +88,8 @@ export function PlanningPanel({
       })
     } finally {
       setIsStreaming(false)
+      void queryClient.invalidateQueries({ queryKey: ["graph-nodes", graphId] })
+      void queryClient.invalidateQueries({ queryKey: ["graph-edges", graphId] })
     }
   }
 
