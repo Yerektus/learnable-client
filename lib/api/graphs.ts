@@ -72,9 +72,23 @@ export async function createGraph(payload: CreateGraphPayload) {
   return data
 }
 
+export async function getGraph(graphId: string) {
+  const { data } = await coreApi.get<Graph>(`/api/v1/graphs/${graphId}`)
+
+  return data
+}
+
 export async function listGraphNodes(graphId: string) {
   const { data } = await coreApi.get<GraphNode[]>(
     `/api/v1/graphs/${graphId}/nodes`
+  )
+
+  return data
+}
+
+export async function getGraphNode(graphId: string, nodeId: string) {
+  const { data } = await coreApi.get<GraphNode>(
+    `/api/v1/graphs/${graphId}/nodes/${nodeId}`
   )
 
   return data
