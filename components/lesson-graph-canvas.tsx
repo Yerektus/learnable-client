@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import * as React from "react"
 import {
+  ChevronDown,
   Circle,
   Hand,
   MousePointer2,
@@ -33,17 +34,11 @@ import {
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Popover,
   PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { Separator } from "@/components/ui/separator"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   Tooltip,
@@ -920,7 +915,7 @@ function ToolbarButton({
 
 function LessonNodeView({ data, id }: NodeProps<LessonNode>) {
   return (
-    <NodeActionPopover label={data.label} nodeId={id} nodeType="lesson">
+    <NodeActionPopover label={data.label} nodeId={id}>
       <div className="relative" style={{ width: data.size, height: data.size }}>
         <span
           className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-10 -translate-x-1/2 rounded bg-neutral-950/85 px-1.5 py-0.5 text-[11px] leading-none font-medium whitespace-nowrap text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
@@ -945,7 +940,7 @@ function TopicNodeView({ data, id }: NodeProps<TopicNode>) {
   const size = data.size ?? 20
 
   return (
-    <NodeActionPopover label={data.label ?? ""} nodeId={id} nodeType="topic">
+    <NodeActionPopover label={data.label ?? ""} nodeId={id}>
       <div className="relative" style={{ width: size, height: size }}>
         {data.label ? (
           <div
@@ -997,7 +992,7 @@ function ClusterNodeView({ data }: NodeProps<ClusterNode>) {
 
 function QuizNodeView({ data, id }: NodeProps<QuizNode>) {
   return (
-    <NodeActionPopover label={data.label} nodeId={id} nodeType="quiz">
+    <NodeActionPopover label={data.label} nodeId={id}>
       <div className="rounded-full bg-[#4a252b]/85 px-4 py-1 text-sm font-semibold text-[#b9545c]">
         {data.label}
       </div>
@@ -1009,15 +1004,12 @@ function NodeActionPopover({
   children,
   label,
   nodeId,
-  nodeType,
 }: {
   children: React.ReactNode
   label: string
   nodeId: string
-  nodeType: "lesson" | "topic" | "quiz"
 }) {
   const actions = useNodeActions()
-  const [labelDraft, setLabelDraft] = React.useState(label)
   const pointerStartRef = React.useRef<{
     hasMoved: boolean
     x: number
@@ -1025,21 +1017,13 @@ function NodeActionPopover({
   } | null>(null)
   const isOpen = actions.activeNodeId === nodeId
 
-  const handleSubmit = React.useCallback(
-    (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      actions.renameNode(nodeId, labelDraft)
-    },
-    [actions, labelDraft, nodeId]
-  )
   const openContextMenu = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault()
       event.stopPropagation()
-      setLabelDraft(label)
       actions.openNodeMenu(nodeId)
     },
-    [actions, label, nodeId]
+    [actions, nodeId]
   )
   const handleNodeClickCapture = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1127,82 +1111,55 @@ function NodeActionPopover({
       />
       <PopoverContent
         align="center"
-        className="nodrag nopan nowheel w-72 gap-3 rounded-lg border border-white/10 bg-neutral-900 p-3 text-neutral-100 shadow-2xl ring-white/10"
+        className="nodrag nopan nowheel w-64 gap-0 rounded-xl border border-white/10 bg-neutral-900 p-0 text-neutral-100 shadow-2xl"
         side="top"
         sideOffset={12}
       >
-        <PopoverHeader>
-          <PopoverTitle className="text-sm text-neutral-50">
-            Node menu
-          </PopoverTitle>
-          <PopoverDescription className="text-xs text-neutral-400">
-            Edit text or create a linked item.
-          </PopoverDescription>
-        </PopoverHeader>
+        {/* Header */}
+        <div className="flex items-center gap-2 border-b border-white/[0.08] px-4 py-3">
+          <span className="size-2 shrink-0 rounded-full bg-green-400" />
+          <span className="truncate text-sm font-medium">{label}</span>
+        </div>
 
-        <form className="flex flex-col gap-2" onSubmit={handleSubmit}>
-          <Label
-            className="text-xs text-neutral-300"
-            htmlFor={`${nodeId}-text`}
-          >
-            Text
-          </Label>
-          <Input
-            id={`${nodeId}-text`}
-            value={labelDraft}
-            onChange={(event) => setLabelDraft(event.target.value)}
-            placeholder={nodeType === "topic" ? "Topic name" : "Node text"}
-          />
-          <Button
-            className="w-full"
-            size="sm"
-            type="submit"
-            variant="secondary"
+        {/* Metrics */}
+        <div className="flex flex-col py-1">
+          {(
+            [
+              { label: "uploaded materials" },
+              { label: "tasks" },
+              { label: "subnodes" },
+            ] as const
+          ).map((item) => (
+            <div
+              key={item.label}
+              className="flex cursor-default items-center justify-between px-4 py-2 text-sm text-neutral-400 transition-colors hover:bg-white/5"
+            >
+              <span>{item.label}</span>
+              <ChevronDown className="size-3.5 text-neutral-600" />
+            </div>
+          ))}
+        </div>
+
+        {/* Actions */}
+        <div className="border-t border-white/[0.08] py-1">
+          <button
+            onClick={() => {
+              actions.openNodePage(nodeId)
+              actions.closeNodeMenu()
+            }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm text-neutral-300 transition-colors hover:bg-white/5"
           >
             <PencilLine className="size-4" />
-            Save text
-          </Button>
-        </form>
-
-        {nodeType !== "quiz" ? (
-          <>
-            <Separator className="bg-white/10" />
-
-            <div className="grid">
-              <Button
-                className="justify-start"
-                onClick={() => actions.addConnectedNode(nodeId, "lesson")}
-                type="button"
-                variant="ghost"
-              >
-                <Plus className="size-4" />
-                {nodeType === "topic"
-                  ? "Add linked lecture"
-                  : "Add linked node"}
-              </Button>
-              {nodeType === "lesson" ? (
-                <Button
-                  className="justify-start"
-                  onClick={() => actions.addConnectedNode(nodeId, "topic")}
-                  type="button"
-                  variant="ghost"
-                >
-                  <Circle className="size-4 fill-[#61bd61] text-[#61bd61]" />
-                  Add linked topic
-                </Button>
-              ) : null}
-              <Button
-              className="justify-start"
-              onClick={() => actions.deleteNode(nodeId)}
-              type="button"
-              variant={"ghost"}
-            >
-              <Trash2 className="size-4" />
-              Delete {nodeType === "topic" ? "topic" : "node"}
-            </Button>
-            </div>
-          </>
-        ) : null}
+            change node
+          </button>
+          <button
+            onClick={() => actions.deleteNode(nodeId)}
+            className="flex w-full items-center gap-2 px-4 py-2 text-sm text-red-400 transition-colors hover:bg-white/5"
+          >
+            <Trash2 className="size-4" />
+            delete node
+          </button>
+        </div>
       </PopoverContent>
     </Popover>
   )

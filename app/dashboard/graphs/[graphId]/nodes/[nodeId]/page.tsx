@@ -3,10 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowLeft,
-  Circle,
-  FileText,
+  ChevronDown,
   MessageCircle,
+  MoreHorizontal,
   Paperclip,
+  Plus,
+  Search,
   Trash2,
 } from "lucide-react"
 import Link from "next/link"
@@ -15,6 +17,7 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { KanbanBoard } from "@/components/kanban-board"
 import { NavUser } from "@/components/nav-user"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -29,14 +32,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
@@ -51,6 +48,7 @@ import {
   type GraphNode,
 } from "@/lib/api/graphs"
 import { getApiErrorMessage } from "@/lib/api/auth"
+import { listTasks } from "@/lib/api/tasks"
 import { useAuthStore } from "@/lib/stores/auth-store"
 import { cn } from "@/lib/utils"
 
@@ -63,6 +61,7 @@ export default function NodePage() {
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
+
   const graphQuery = useQuery({
     queryKey: ["graph", graphId],
     queryFn: () => getGraph(graphId),
@@ -84,26 +83,20 @@ export default function NodePage() {
       toast.error(getApiErrorMessage(error))
     },
   })
+
   const node = nodeQuery.data
   const graphNodes = graphNodesQuery.data ?? []
-  const lessonNodes = graphNodes.filter((item) => item.node_type === "lesson")
-  const topicNodes = graphNodes.filter((item) => item.node_type === "topic")
   const isDeletableNode =
     node?.node_type === "lesson" || node?.node_type === "topic"
 
   async function handleDeleteNode() {
-    if (!node || !isDeletableNode) {
-      return
-    }
+    if (!node || !isDeletableNode) return
 
     const deleteLabel = node.node_type === "topic" ? "topic" : "node"
     const shouldDelete = window.confirm(
       `Delete ${deleteLabel} "${node.title}"?`
     )
-
-    if (!shouldDelete) {
-      return
-    }
+    if (!shouldDelete) return
 
     try {
       await deleteNodeMutation.mutateAsync()
@@ -126,12 +119,13 @@ export default function NodePage() {
         <div className="flex min-h-svh w-full bg-neutral-950 text-neutral-100">
           <NodeSidebar
             graphId={graphId}
-            isLoading={graphNodesQuery.isLoading}
-            lessonNodes={lessonNodes}
             nodeId={nodeId}
+            nodeTitle={node?.title ?? ""}
+            graphNodes={graphNodes}
+            isLoadingNodes={graphNodesQuery.isLoading}
+            onBack={() => router.push(`/dashboard/graphs/${graphId}`)}
             onLogout={clearAuth}
             onOpenSettings={() => setIsSettingsDialogOpen(true)}
-            topicNodes={topicNodes}
             userName={user?.username ?? user?.email ?? "Learner"}
           />
 
@@ -183,7 +177,7 @@ export default function NodePage() {
                   </CardHeader>
                 </Card>
               ) : node ? (
-                <NodeWorkspace />
+                <NodeWorkspace graphId={graphId} nodeId={nodeId} />
               ) : null}
             </main>
           </SidebarInset>
@@ -199,30 +193,39 @@ export default function NodePage() {
 
 function NodeSidebar({
   graphId,
-  isLoading,
-  lessonNodes,
   nodeId,
+  nodeTitle,
+  graphNodes,
+  isLoadingNodes,
+  onBack,
   onLogout,
   onOpenSettings,
-  topicNodes,
   userName,
 }: {
   graphId: string
-  isLoading: boolean
-  lessonNodes: GraphNode[]
   nodeId: string
+  nodeTitle: string
+  graphNodes: GraphNode[]
+  isLoadingNodes: boolean
+  onBack: () => void
   onLogout: () => void
   onOpenSettings: () => void
-  topicNodes: GraphNode[]
   userName: string
 }) {
-  const data = {
-    user: {
-      name: userName,
-      email: "Profile",
-      avatar: "",
-    },
-  }
+  const tasksQuery = useQuery({
+    queryKey: ["tasks"],
+    queryFn: listTasks,
+  })
+  const nodeTasks = (tasksQuery.data ?? []).filter(
+    (t) => t.topic_id === nodeId
+  )
+  const [nodesOpen, setNodesOpen] = React.useState(true)
+  const [subtopicsOpen, setSubtopicsOpen] = React.useState(false)
+
+  const btnClass =
+    "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-neutral-300 hover:bg-white/10 hover:text-white transition-colors text-left"
+
+  const userData = { name: userName, email: "Profile", avatar: "" }
 
   return (
     <Sidebar collapsible="icon" className="bg-neutral-950">
@@ -234,32 +237,98 @@ function NodeSidebar({
           <SidebarTrigger className="size-8 text-neutral-400 group-data-[state=collapsed]:cursor-e-resize group-data-[state=expanded]:cursor-w-resize hover:bg-white/10 hover:text-neutral-100" />
         </div>
       </SidebarHeader>
+
       <SidebarContent className="border-r border-sidebar-border">
-        {isLoading ? (
-          <div className="flex items-center gap-2 px-5 py-3 text-sm text-neutral-500">
-            <Spinner className="size-4" />
-            Loading
+        <div className="px-2 py-2">
+          <button onClick={onBack} className={btnClass}>
+            <ArrowLeft className="size-4 shrink-0" />
+            <span className="group-data-[collapsible=icon]:hidden">Back</span>
+          </button>
+        </div>
+
+        <div className="group-data-[collapsible=icon]:hidden px-2 pb-4">
+          <button className={btnClass} onClick={() => alert("TODO")}>
+            <Plus className="size-4 shrink-0" />
+            new task
+          </button>
+          <button className={btnClass} onClick={() => alert("TODO")}>
+            <Search className="size-4 shrink-0" />
+            search
+          </button>
+
+          <div className="my-2 h-px bg-white/10" />
+
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-white/10 px-3 py-1.5 text-white">
+            <span className="truncate text-sm">{nodeTitle}</span>
+            <MoreHorizontal className="size-4 shrink-0 text-neutral-500" />
           </div>
-        ) : (
-          <>
-            <NodeSidebarGroup
-              graphId={graphId}
-              label="Lectures"
-              nodes={lessonNodes}
-              nodeId={nodeId}
+
+          {nodeTasks.map((task) => (
+            <div key={task.id} className={cn(btnClass, "cursor-default pl-6")}>
+              <span className="truncate">{task.title}</span>
+            </div>
+          ))}
+
+          <div className="my-2 h-px bg-white/10" />
+
+          <button
+            className={cn(btnClass, "justify-between")}
+            onClick={() => setNodesOpen((o) => !o)}
+          >
+            <span>Nodes</span>
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !nodesOpen && "-rotate-90"
+              )}
             />
-            <NodeSidebarGroup
-              graphId={graphId}
-              label="Topics"
-              nodes={topicNodes}
-              nodeId={nodeId}
+          </button>
+          {nodesOpen && (
+            <div className="mt-0.5">
+              {isLoadingNodes ? (
+                <div className="px-3 py-1 text-xs text-neutral-500">
+                  Loading...
+                </div>
+              ) : graphNodes.length > 0 ? (
+                graphNodes.map((n) => (
+                  <Link
+                    key={n.id}
+                    href={`/dashboard/graphs/${graphId}/nodes/${n.id}`}
+                    className={cn(
+                      btnClass,
+                      n.id === nodeId ? "bg-white/10 text-white" : ""
+                    )}
+                  >
+                    <span className="truncate">{n.title}</span>
+                  </Link>
+                ))
+              ) : (
+                <div className="px-3 py-1 text-xs text-neutral-600">Empty</div>
+              )}
+            </div>
+          )}
+
+          <button
+            className={cn(btnClass, "justify-between")}
+            onClick={() => setSubtopicsOpen((o) => !o)}
+          >
+            <span>Subtopics</span>
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition-transform",
+                !subtopicsOpen && "-rotate-90"
+              )}
             />
-          </>
-        )}
+          </button>
+          {subtopicsOpen && (
+            <div className="px-3 py-1 text-xs text-neutral-600">Empty</div>
+          )}
+        </div>
       </SidebarContent>
+
       <SidebarFooter className="border-r border-sidebar-border">
         <NavUser
-          user={data.user}
+          user={userData}
           onLogout={onLogout}
           onOpenSettings={onOpenSettings}
         />
@@ -269,60 +338,13 @@ function NodeSidebar({
   )
 }
 
-function NodeSidebarGroup({
+function NodeWorkspace({
   graphId,
-  label,
-  nodes,
-  nodeId,
+  nodeId: _nodeId,
 }: {
   graphId: string
-  label: string
-  nodes: GraphNode[]
   nodeId: string
 }) {
-  return (
-    <SidebarGroup>
-      <SidebarGroupLabel className="text-base text-neutral-100">
-        {label}
-      </SidebarGroupLabel>
-      <SidebarGroupContent>
-        {nodes.length > 0 ? (
-          <SidebarMenu>
-            {nodes.map((node) => (
-              <SidebarMenuItem key={node.id}>
-                <SidebarMenuButton
-                  render={
-                    <Link
-                      href={`/dashboard/graphs/${graphId}/nodes/${node.id}`}
-                    />
-                  }
-                  isActive={node.id === nodeId}
-                  className="rounded-full text-neutral-200 hover:bg-white/10 hover:text-white data-active:bg-white/10"
-                  tooltip={node.title}
-                >
-                  {node.node_type === "topic" ? (
-                    <Circle
-                      className="size-4"
-                      fill={node.color ?? "#61bd61"}
-                      strokeWidth={1.8}
-                    />
-                  ) : (
-                    <FileText className="size-4" strokeWidth={1.8} />
-                  )}
-                  <span>{node.title}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        ) : (
-          <div className="px-3 py-2 text-sm text-neutral-500">Empty</div>
-        )}
-      </SidebarGroupContent>
-    </SidebarGroup>
-  )
-}
-
-function NodeWorkspace() {
   return (
     <Tabs defaultValue="chat" className="grid gap-4">
       <TabsList>
@@ -334,17 +356,12 @@ function NodeWorkspace() {
           <Paperclip className="size-4" />
           Materials
         </TabsTrigger>
+        <TabsTrigger value="canvas">Canvas</TabsTrigger>
+        <TabsTrigger value="kanban">Kanban</TabsTrigger>
       </TabsList>
 
-      <TabsContent value="chat" className="min-h-80">
-        <Card className="h-full rounded-lg border-white/10 bg-white/[0.03] text-neutral-100">
-          <CardHeader>
-            <CardTitle className="text-lg">Chat</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-neutral-500">
-            No messages yet.
-          </CardContent>
-        </Card>
+      <TabsContent value="chat">
+        <ChatTab />
       </TabsContent>
 
       <TabsContent value="materials" className="min-h-80">
@@ -357,6 +374,39 @@ function NodeWorkspace() {
           </CardContent>
         </Card>
       </TabsContent>
+
+      <TabsContent value="canvas" className="min-h-80">
+        <div className="flex min-h-80 items-center justify-center text-sm text-neutral-500">
+          Canvas — coming soon
+        </div>
+      </TabsContent>
+
+      <TabsContent value="kanban" className="min-h-0 pt-4">
+        <KanbanBoard graphId={graphId} />
+      </TabsContent>
     </Tabs>
+  )
+}
+
+function ChatTab() {
+  const [input, setInput] = React.useState("")
+
+  return (
+    <div
+      className="flex flex-col overflow-hidden rounded-xl border border-white/10"
+      style={{ minHeight: 520 }}
+    >
+      <div className="flex-1 p-6" />
+      <div className="border-t border-white/10 p-4">
+        <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2.5">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Message..."
+            className="flex-1 bg-transparent text-sm text-neutral-200 outline-none placeholder:text-neutral-600"
+          />
+        </div>
+      </div>
+    </div>
   )
 }

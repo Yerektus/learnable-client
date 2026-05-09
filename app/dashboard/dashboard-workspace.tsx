@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { KanbanBoard } from "@/components/kanban-board"
 import { LessonGraphCanvas } from "@/components/lesson-graph-canvas"
 import { NavGraphs, NavGraphsLoading } from "@/components/nav-graphs"
 import { NavMain } from "@/components/nav-main"
@@ -156,7 +157,7 @@ export function DashboardWorkspace({
                 >
                   <header className="sticky top-0 z-10 flex min-h-16 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
                     <TabsList>
-                      <TabsTrigger value="graphs">Canvas</TabsTrigger>
+                      <TabsTrigger value="graphs">Graphs</TabsTrigger>
                       <TabsTrigger value="kanban">Kanban</TabsTrigger>
                     </TabsList>
                   </header>
@@ -169,20 +170,7 @@ export function DashboardWorkspace({
                   </TabsContent>
 
                   <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
-                    <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
-                      {["Backlog", "Not started", "In progress", "Done"].map(
-                        (column) => (
-                          <section
-                            key={column}
-                            className="min-h-80 rounded-lg border border-white/10 bg-white/[0.03] p-4"
-                          >
-                            <h2 className="text-sm font-medium text-neutral-200">
-                              {column}
-                            </h2>
-                          </section>
-                        )
-                      )}
-                    </div>
+                    <KanbanBoard graphId={selectedGraph.id} />
                   </TabsContent>
                 </Tabs>
               ) : graphsQuery.isLoading ? null : graphs.length > 0 ? (

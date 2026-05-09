@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
@@ -151,7 +152,7 @@ export function KanbanBoard({ graphId }: { graphId: string }) {
         onClose={() => setCreateStatus(null)}
       />
 
-      <EditTaskDialog
+      <EditTaskSheet
         task={editTask}
         nodes={nodes}
         otherColumns={COLUMNS}
@@ -269,8 +270,7 @@ function TaskCard({
       {(linkedNode || task.tags.length > 0) && (
         <div className="flex flex-wrap gap-1.5 pt-0.5">
           {linkedNode && (
-            <span className="flex items-center gap-1 rounded-full border border-blue-800/60 bg-blue-950/40 px-2.5 py-0.5 text-xs text-blue-300">
-              <Link className="size-3" />
+            <span className="rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-xs text-neutral-300">
               {linkedNode.title}
             </span>
           )}
@@ -559,9 +559,9 @@ function CreateTaskDialog({
   )
 }
 
-// ─── EditTaskDialog ───────────────────────────────────────────────────────────
+// ─── EditTaskSheet ────────────────────────────────────────────────────────────
 
-function EditTaskDialog({
+function EditTaskSheet({
   task,
   nodes,
   otherColumns,
@@ -581,7 +581,6 @@ function EditTaskDialog({
   const [description, setDescription] = React.useState("")
   const [tags, setTags] = React.useState<string[]>([])
   const [topicId, setTopicId] = React.useState<string | null>(null)
-  const [titleError, setTitleError] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     if (task) {
@@ -589,7 +588,6 @@ function EditTaskDialog({
       setDescription(task.description ?? "")
       setTags(task.tags)
       setTopicId(task.topic_id)
-      setTitleError(null)
     }
   }, [task])
 
@@ -611,109 +609,115 @@ function EditTaskDialog({
 
   const currentCol = COLUMNS.find((c) => c.id === task?.status)
   const moveTargets = otherColumns.filter((c) => c.id !== task?.status)
+  const linkedNode = nodes.find((n) => n.id === topicId)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!title.trim()) {
-      setTitleError("Title is required.")
-      return
-    }
-    setTitleError(null)
+    if (!title.trim()) return
     updateMutation.mutate()
   }
 
   return (
-    <Dialog open={task !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="rounded-2xl bg-neutral-950 text-neutral-100 sm:max-w-sm">
-        <form onSubmit={handleSubmit} className="grid gap-5">
-          <DialogHeader>
-            <DialogTitle>Edit task</DialogTitle>
-          </DialogHeader>
+    <Sheet open={task !== null} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        side="right"
+        className="w-[420px] overflow-y-auto border-l border-white/10 bg-neutral-950 px-6 pt-4 text-neutral-100"
+      >
+        {/* Header */}
+        <div className="mb-2 flex items-center gap-3 pr-8 pt-2">
+          <span className="text-2xl text-neutral-400">»</span>
+          <h2 className="truncate text-xl font-semibold">
+            {task?.title ?? ""}
+          </h2>
+        </div>
 
-          <div className="grid gap-4">
-            {currentCol && (
-              <div className="flex items-center gap-2">
-                <span className={cn("size-2 rounded-full", currentCol.dot)} />
-                <span className="text-xs capitalize text-neutral-400">
-                  {currentCol.label}
-                </span>
-              </div>
-            )}
-
-            <Field>
-              <FieldLabel htmlFor="edit-title">Title</FieldLabel>
-              <Input
-                id="edit-title"
-                value={title}
-                onChange={(e) => {
-                  setTitle(e.target.value)
-                  setTitleError(null)
-                }}
-                disabled={updateMutation.isPending}
-                aria-invalid={Boolean(titleError)}
-                autoFocus
-              />
-              {titleError && <FieldError>{titleError}</FieldError>}
-            </Field>
-
-            <Field>
-              <FieldLabel htmlFor="edit-description">
-                Description{" "}
-                <span className="text-neutral-500">(optional)</span>
-              </FieldLabel>
-              <Textarea
-                id="edit-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                disabled={updateMutation.isPending}
-                rows={3}
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Node</FieldLabel>
-              <NodeSelector
-                nodes={nodes}
-                selectedId={topicId}
-                onChange={setTopicId}
-                disabled={updateMutation.isPending}
-              />
-            </Field>
-
-            <Field>
-              <FieldLabel>Tags</FieldLabel>
-              <TagInput
-                tags={tags}
-                onChange={setTags}
-                disabled={updateMutation.isPending}
-              />
-            </Field>
-
-            {moveTargets.length > 0 && (
-              <Field>
-                <FieldLabel>Move to</FieldLabel>
-                <div className="flex flex-wrap gap-2">
-                  {moveTargets.map((col) => (
-                    <button
-                      key={col.id}
-                      type="button"
-                      disabled={updateMutation.isPending}
-                      onClick={() => {
-                        onMove(task!.id, col.id)
-                        onClose()
-                      }}
-                      className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300 transition-colors hover:border-white/20 hover:bg-white/[0.08]"
-                    >
-                      <span className={cn("size-1.5 rounded-full", col.dot)} />
-                      {col.label}
-                    </button>
-                  ))}
-                </div>
-              </Field>
-            )}
+        {/* Status */}
+        {currentCol && (
+          <div className="mb-4 flex items-center gap-2">
+            <span className={cn("size-2 rounded-full", currentCol.dot)} />
+            <span className="text-sm capitalize text-neutral-400">
+              {currentCol.label}
+            </span>
           </div>
+        )}
 
-          <DialogFooter className="flex-row items-center justify-between sm:justify-between">
+        {/* Tags */}
+        {(linkedNode || (task?.tags?.length ?? 0) > 0) && (
+          <div className="mb-6 flex flex-wrap gap-1.5">
+            {linkedNode && (
+              <span className="rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-xs text-neutral-300">
+                {linkedNode.title}
+              </span>
+            )}
+            {task?.tags.map((tag) => (
+              <span
+                key={tag}
+                className="rounded-full border border-white/[0.12] bg-white/[0.04] px-2.5 py-0.5 text-xs text-neutral-300"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="grid gap-4">
+          <Field>
+            <FieldLabel htmlFor="edit-description">Description</FieldLabel>
+            <Textarea
+              id="edit-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Description..."
+              disabled={updateMutation.isPending}
+              rows={4}
+              className="resize-none"
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Node</FieldLabel>
+            <NodeSelector
+              nodes={nodes}
+              selectedId={topicId}
+              onChange={setTopicId}
+              disabled={updateMutation.isPending}
+            />
+          </Field>
+
+          <Field>
+            <FieldLabel>Tags</FieldLabel>
+            <TagInput
+              tags={tags}
+              onChange={setTags}
+              disabled={updateMutation.isPending}
+            />
+          </Field>
+
+          {moveTargets.length > 0 && (
+            <Field>
+              <FieldLabel>Move to</FieldLabel>
+              <div className="flex flex-wrap gap-2">
+                {moveTargets.map((col) => (
+                  <button
+                    key={col.id}
+                    type="button"
+                    disabled={updateMutation.isPending}
+                    onClick={() => {
+                      onMove(task!.id, col.id)
+                      onClose()
+                    }}
+                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-neutral-300 transition-colors hover:border-white/20"
+                  >
+                    <span className={cn("size-1.5 rounded-full", col.dot)} />
+                    {col.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
+
+          <div className="flex items-center justify-between pt-2">
             <Button
               type="button"
               variant="ghost"
@@ -740,10 +744,10 @@ function EditTaskDialog({
                 {updateMutation.isPending ? "Saving…" : "Save"}
               </Button>
             </div>
-          </DialogFooter>
+          </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   )
 }
 
