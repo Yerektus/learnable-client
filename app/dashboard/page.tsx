@@ -7,6 +7,7 @@ import { FolderCode, Loader2, SquareTerminal } from "lucide-react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { LessonGraphCanvas } from "@/components/lesson-graph-canvas"
 import { NavGraphs, NavGraphsLoading } from "@/components/nav-graphs"
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
@@ -142,14 +143,16 @@ export default function DashboardPage() {
                   defaultValue="graphs"
                   className="grid grid-rows-[auto_1fr] gap-0"
                 >
-                  <header className="sticky top-0 z-10 flex min-h-20 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
+                  <header className="sticky top-0 z-10 flex min-h-16 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
                     <TabsList>
                       <TabsTrigger value="graphs">Graphs</TabsTrigger>
                       <TabsTrigger value="kanban">Kanban</TabsTrigger>
                     </TabsList>
                   </header>
 
-                  <TabsContent value="graphs" className="min-h-0"></TabsContent>
+                  <TabsContent value="graphs" className="min-h-0">
+                    <LessonGraphCanvas />
+                  </TabsContent>
 
                   <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
                     <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-4">

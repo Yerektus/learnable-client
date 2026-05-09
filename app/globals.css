@@ -1,3 +1,4 @@
+@import "@xyflow/react/dist/style.css";
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
@@ -96,4 +97,9 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+.learnable-flow .react-flow__node {
+  left: 0;
+  top: 0;
 }
