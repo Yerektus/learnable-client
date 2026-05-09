@@ -15,6 +15,7 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { MaterialsTab } from "@/components/materials-tab"
 import { NavUser } from "@/components/nav-user"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -183,7 +184,7 @@ export default function NodePage() {
                   </CardHeader>
                 </Card>
               ) : node ? (
-                <NodeWorkspace />
+                <NodeWorkspace nodeId={nodeId} />
               ) : null}
             </main>
           </SidebarInset>
@@ -322,7 +323,7 @@ function NodeSidebarGroup({
   )
 }
 
-function NodeWorkspace() {
+function NodeWorkspace({ nodeId }: { nodeId: string }) {
   return (
     <Tabs defaultValue="chat" className="grid gap-4">
       <TabsList>
@@ -347,15 +348,8 @@ function NodeWorkspace() {
         </Card>
       </TabsContent>
 
-      <TabsContent value="materials" className="min-h-80">
-        <Card className="h-full rounded-lg border-white/10 bg-white/[0.03] text-neutral-100">
-          <CardHeader>
-            <CardTitle className="text-lg">Materials</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-neutral-500">
-            No materials yet.
-          </CardContent>
-        </Card>
+      <TabsContent value="materials" className="min-h-0">
+        <MaterialsTab nodeId={nodeId} />
       </TabsContent>
     </Tabs>
   )
