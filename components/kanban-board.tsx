@@ -433,19 +433,15 @@ function CreateTaskDialog({
     COLUMNS.find((c) => c.id === initialStatus)?.label ?? "New task"
 
   const createMutation = useMutation({
-    mutationFn: async () => {
-      const task = await createTask({
+    mutationFn: () =>
+      createTask({
         title: title.trim(),
         description: description.trim() || null,
+        status: initialStatus,
         graph_id: graphId,
         topic_id: topicId,
         tags,
-      })
-      if (initialStatus !== "not_started") {
-        return updateTask(task.id, { status: initialStatus })
-      }
-      return task
-    },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] })
       toast.success("Task created.")

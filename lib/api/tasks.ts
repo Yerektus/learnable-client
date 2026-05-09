@@ -21,6 +21,7 @@ export type Task = {
 export type CreateTaskPayload = {
   title: string
   description?: string | null
+  status?: TaskStatus
   graph_id?: string | null
   topic_id?: string | null
   tags?: string[]
