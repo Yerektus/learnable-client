@@ -81,7 +81,6 @@ export default function DashboardPage() {
       isActive: graph.id === selectedGraphId,
     })) ?? []
   const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
-  const hasSelectedGraph = Boolean(selectedGraph)
   const trimmedGraphName = graphName.trim()
 
   const createGraphMutation = useMutation({
@@ -138,20 +137,23 @@ export default function DashboardPage() {
             />
 
             <SidebarInset className="min-h-svh bg-neutral-950">
-              {hasSelectedGraph ? (
+              {selectedGraph ? (
                 <Tabs
                   defaultValue="graphs"
                   className="grid grid-rows-[auto_1fr] gap-0"
                 >
                   <header className="sticky top-0 z-10 flex min-h-16 w-full shrink-0 items-center justify-center bg-neutral-950 px-6">
                     <TabsList>
-                      <TabsTrigger value="graphs">Graphs</TabsTrigger>
+                      <TabsTrigger value="graphs">Canvas</TabsTrigger>
                       <TabsTrigger value="kanban">Kanban</TabsTrigger>
                     </TabsList>
                   </header>
 
                   <TabsContent value="graphs" className="min-h-0">
-                    <LessonGraphCanvas />
+                    <LessonGraphCanvas
+                      key={selectedGraph.id}
+                      graphId={selectedGraph.id}
+                    />
                   </TabsContent>
 
                   <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
@@ -382,7 +384,7 @@ function GraphSearchDialog({
   )
 }
 
-export function AppSidebar({
+function AppSidebar({
   userName,
   onLogout,
   graphs,
