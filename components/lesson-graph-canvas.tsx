@@ -1481,7 +1481,7 @@ function DeadlineActionPopover({
   )
 }
 
-function NodeActionPopover(function NodeActionPopover({
+function NodeActionPopover({
   children,
   label,
   nodeId,
