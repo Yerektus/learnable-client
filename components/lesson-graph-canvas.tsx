@@ -119,6 +119,8 @@ type NodeActionContextValue = {
   activeNodeId: string | null
   addConnectedNode: (sourceNodeId: string, nodeType: ConnectedNodeType) => void
   closeNodeMenu: () => void
+  convertCluster: (nodeId: string, title: string, date: string, nodeIds: string[]) => Promise<void>
+  deleteCluster: (nodeId: string) => Promise<void>
   deleteNode: (nodeId: string) => void
   graphId: string
   openNodeMenu: (nodeId: string) => void
@@ -536,6 +538,57 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       setNodes,
     ]
   )
+  const convertCluster = React.useCallback(
+    async (nodeId: string, title: string, date: string, nodeIds: string[]) => {
+      const { deadline_id } = await createManualDeadline({
+        graph_id: graphId,
+        title,
+        date,
+        type: "quiz",
+        node_ids: nodeIds,
+      })
+      await updateGraphNode(graphId, nodeId, {
+        node_type: "quiz",
+        title,
+        falkordb_deadline_id: deadline_id,
+      })
+      setNodes((currentNodes) =>
+        currentNodes.map((n) => {
+          if (n.id !== nodeId) return n
+          return {
+            id: n.id,
+            type: "quiz",
+            position: n.position,
+            data: { label: title, description: undefined, falkordbDeadlineId: deadline_id },
+            draggable: false,
+            style: { width: "max-content" },
+            zIndex: 3,
+          } satisfies QuizNode
+        })
+      )
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+        (prev ?? []).map((n) =>
+          n.id === nodeId
+            ? { ...n, node_type: "quiz", title, falkordb_deadline_id: deadline_id }
+            : n
+        )
+      )
+    },
+    [graphId, nodesQueryKey, queryClient, setNodes]
+  )
+
+  const deleteCluster = React.useCallback(
+    async (nodeId: string) => {
+      await deleteNodeMutation.mutateAsync(nodeId)
+      setActiveNodeId(null)
+      setNodes((currentNodes) => currentNodes.filter((n) => n.id !== nodeId))
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+        removeDeletedNodeFromApiNodes(prev ?? [], nodeId)
+      )
+    },
+    [deleteNodeMutation, nodesQueryKey, queryClient, setNodes]
+  )
+
   const addConnectedNode = React.useCallback(
     async (sourceNodeId: string, nodeType: ConnectedNodeType) => {
       const sourceNode = nodes.find((node) => node.id === sourceNodeId)
@@ -972,6 +1025,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       activeNodeId,
       addConnectedNode,
       closeNodeMenu: () => setActiveNodeId(null),
+      convertCluster,
+      deleteCluster,
       deleteNode,
       graphId,
       openNodeMenu: setActiveNodeId,
@@ -981,7 +1036,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       },
       renameNode,
     }),
-    [activeNodeId, addConnectedNode, deleteNode, graphId, renameNode, router]
+    [activeNodeId, addConnectedNode, convertCluster, deleteCluster, deleteNode, graphId, renameNode, router]
   )
 
   return (
@@ -1332,7 +1387,6 @@ function ClusterActionPopover({
   nodeIds: string[]
 }) {
   const actions = useNodeActions()
-  const queryClient = useQueryClient()
   const isOpen = actions.activeNodeId === nodeId
   const [title, setTitle] = React.useState("")
   const [date, setDate] = React.useState("")
@@ -1372,37 +1426,34 @@ function ClusterActionPopover({
     }
   }, [])
 
-  const convertMutation = useMutation({
-    mutationFn: async () => {
-      const { deadline_id } = await createManualDeadline({
-        graph_id: actions.graphId,
-        title,
-        date,
-        type: "quiz",
-        node_ids: nodeIds,
-      })
-      await updateGraphNode(actions.graphId, nodeId, {
-        node_type: "quiz",
-        title,
-        falkordb_deadline_id: deadline_id,
-      })
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["graph-nodes", actions.graphId] })
-      actions.closeNodeMenu()
-      toast.success("Converted to deadline")
-    },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
-  })
+  const [isConverting, setIsConverting] = React.useState(false)
+  const [isDeleting, setIsDeleting] = React.useState(false)
 
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteGraphNode(actions.graphId, nodeId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["graph-nodes", actions.graphId] })
+  async function handleConvert() {
+    if (!title || !date) return
+    setIsConverting(true)
+    try {
+      await actions.convertCluster(nodeId, title, date, nodeIds)
+      toast.success("Converted to deadline")
       actions.closeNodeMenu()
-    },
-    onError: (error) => toast.error(getApiErrorMessage(error)),
-  })
+    } catch (error) {
+      toast.error(getApiErrorMessage(error))
+    } finally {
+      setIsConverting(false)
+    }
+  }
+
+  async function handleDelete() {
+    setIsDeleting(true)
+    try {
+      await actions.deleteCluster(nodeId)
+      actions.closeNodeMenu()
+    } catch (error) {
+      toast.error(getApiErrorMessage(error))
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   return (
     <Popover
@@ -1455,13 +1506,13 @@ function ClusterActionPopover({
         <div className="mt-3 grid gap-0.5">
           <Button
             className="justify-start text-neutral-200"
-            disabled={!title || !date || convertMutation.isPending}
-            onClick={() => convertMutation.mutate()}
+            disabled={!title || !date || isConverting}
+            onClick={handleConvert}
             size="sm"
             type="button"
             variant="ghost"
           >
-            {convertMutation.isPending ? (
+            {isConverting ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <CalendarDays className="size-4" />
@@ -1470,8 +1521,8 @@ function ClusterActionPopover({
           </Button>
           <Button
             className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
-            disabled={deleteMutation.isPending}
-            onClick={() => deleteMutation.mutate()}
+            disabled={isDeleting}
+            onClick={handleDelete}
             size="sm"
             type="button"
             variant="ghost"

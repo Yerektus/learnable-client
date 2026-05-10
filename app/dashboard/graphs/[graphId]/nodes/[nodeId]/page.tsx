@@ -141,7 +141,7 @@ export default function NodePage() {
   const isDeletableNode =
     node?.node_type === "lesson" || node?.node_type === "topic"
   const activeChatType: ChatType =
-    chatsQuery.data?.find((c) => c.id === activeChatId)?.chat_type ?? "theory"
+    (chatsQuery.data?.find((c) => c.id === activeChatId)?.chat_type as ChatType | undefined) ?? "theory"
 
   async function handleDeleteNode() {
     if (!node || !isDeletableNode) return
