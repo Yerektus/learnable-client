@@ -24,6 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Sheet,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -151,7 +158,7 @@ export function KanbanBoard({ graphId }: { graphId: string }) {
         onClose={() => setCreateStatus(null)}
       />
 
-      <EditTaskDialog
+      <EditTaskPanel
         task={editTask}
         nodes={nodes}
         otherColumns={COLUMNS}
@@ -555,9 +562,9 @@ function CreateTaskDialog({
   )
 }
 
-// ─── EditTaskDialog ───────────────────────────────────────────────────────────
+// ─── EditTaskPanel ────────────────────────────────────────────────────────────
 
-function EditTaskDialog({
+function EditTaskPanel({
   task,
   nodes,
   otherColumns,
@@ -619,14 +626,17 @@ function EditTaskDialog({
   }
 
   return (
-    <Dialog open={task !== null} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="rounded-2xl bg-neutral-950 text-neutral-100 sm:max-w-sm">
-        <form onSubmit={handleSubmit} className="grid gap-5">
-          <DialogHeader>
-            <DialogTitle>Edit task</DialogTitle>
-          </DialogHeader>
+    <Sheet open={task !== null} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        side="right"
+        className="w-80 sm:w-96 bg-neutral-950 text-neutral-100"
+      >
+        <form onSubmit={handleSubmit} className="flex h-full flex-col">
+          <SheetHeader>
+            <SheetTitle className="text-neutral-100">Edit task</SheetTitle>
+          </SheetHeader>
 
-          <div className="grid gap-4">
+          <div className="flex-1 overflow-y-auto px-6 pb-2 grid gap-4 content-start">
             {currentCol && (
               <div className="flex items-center gap-2">
                 <span className={cn("size-2 rounded-full", currentCol.dot)} />
@@ -709,7 +719,7 @@ function EditTaskDialog({
             )}
           </div>
 
-          <DialogFooter className="flex-row items-center justify-between sm:justify-between">
+          <SheetFooter className="flex-row items-center justify-between sm:justify-between">
             <Button
               type="button"
               variant="ghost"
@@ -736,10 +746,10 @@ function EditTaskDialog({
                 {updateMutation.isPending ? "Saving…" : "Save"}
               </Button>
             </div>
-          </DialogFooter>
+          </SheetFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   )
 }
 

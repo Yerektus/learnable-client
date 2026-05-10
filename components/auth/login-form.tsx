@@ -72,7 +72,6 @@ export function LoginForm({
 
   const mutation = useMutation({
     mutationFn: async (values: AuthFormValues) => {
-      clearAuth()
       const password = values.password
       const loginValue =
         mode === "register"

@@ -55,11 +55,13 @@ export function PlanningPanel({
     setInput("")
     if (textareaRef.current) textareaRef.current.style.height = "auto"
     setIsStreaming(true)
+    const history = messages
 
     try {
       for await (const chunk of streamPlanningPanel({
         graphId,
         message: trimmed,
+        history,
       })) {
         onMessagesChange((prev) => {
           const updated = [...prev]

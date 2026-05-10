@@ -48,6 +48,13 @@ export async function listTasks(): Promise<Task[]> {
   return data
 }
 
+export async function listTasksByGraph(graphId: string): Promise<Task[]> {
+  const { data } = await coreApi.get<Task[]>("/api/v1/kanban", {
+    params: { limit: 500, graph_id: graphId },
+  })
+  return data
+}
+
 export async function createTask(payload: CreateTaskPayload): Promise<Task> {
   const { data } = await coreApi.post<Task>(
     "/api/v1/kanban",

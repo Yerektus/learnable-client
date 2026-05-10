@@ -85,9 +85,11 @@ export async function* streamNodeChat({
 export async function* streamPlanningPanel({
   graphId,
   message,
+  history = [],
 }: {
   graphId: string
   message: string
+  history?: { role: string; content: string }[]
 }): AsyncGenerator<string> {
   const token = useAuthStore.getState().accessToken
 
@@ -99,12 +101,65 @@ export async function* streamPlanningPanel({
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, history }),
     },
   )
 
   if (!response.ok) {
     throw new Error(`Planning request failed: ${response.status}`)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) return
+
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split("\n")
+      buffer = lines.pop() ?? ""
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const chunk = line.slice(6)
+          if (chunk) yield chunk
+        }
+      }
+    }
+
+    if (buffer.startsWith("data: ")) {
+      const chunk = buffer.slice(6)
+      if (chunk) yield chunk
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+export async function* streamDeadlinePrep(
+  deadlineId: string,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const token = useAuthStore.getState().accessToken
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/v1/ai/deadlines/${deadlineId}/prepare`,
+    {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal,
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`Preparation request failed: ${response.status}`)
   }
 
   const reader = response.body?.getReader()

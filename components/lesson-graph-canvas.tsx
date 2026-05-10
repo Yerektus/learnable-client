@@ -4,9 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import * as React from "react"
 import {
+  ChevronRight,
   Circle,
   Hand,
   MousePointer2,
+  Paperclip,
   PencilLine,
   Plus,
   Redo2,
@@ -33,8 +35,6 @@ import {
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   Popover,
   PopoverContent,
@@ -54,6 +54,7 @@ import {
 import {
   createGraphEdge,
   createGraphNode,
+  deleteGraphEdge,
   deleteGraphNode,
   listGraphEdges,
   listGraphNodes,
@@ -63,6 +64,7 @@ import {
   type GraphNode as ApiGraphNode,
 } from "@/lib/api/graphs"
 import { getApiErrorMessage } from "@/lib/api/auth"
+import { listTasksByGraph } from "@/lib/api/tasks"
 import { cn } from "@/lib/utils"
 
 type LessonData = {
@@ -84,6 +86,7 @@ type ClusterData = {
 
 type QuizData = {
   label: string
+  falkordbDeadlineId?: string
 }
 
 type LessonNode = Node<LessonData, "lesson">
@@ -95,10 +98,11 @@ type GraphNode = LessonNode | TopicNode | ClusterNode | QuizNode
 type CanvasTool = "cursor" | "hand" | "pen"
 type ConnectedNodeType = "lesson" | "topic"
 
-type GraphSnapshot = {
-  nodes: GraphNode[]
-  edges: Edge[]
-  customNodeIds: string[]
+const MAX_HISTORY = 20
+
+type ApiSnapshot = {
+  nodes: ApiGraphNode[]
+  edges: ApiGraphEdge[]
 }
 
 type NodeActionContextValue = {
@@ -106,6 +110,7 @@ type NodeActionContextValue = {
   addConnectedNode: (sourceNodeId: string, nodeType: ConnectedNodeType) => void
   closeNodeMenu: () => void
   deleteNode: (nodeId: string) => void
+  graphId: string
   openNodeMenu: (nodeId: string) => void
   openNodePage: (nodeId: string) => void
   renameNode: (nodeId: string, label: string) => void
@@ -165,8 +170,9 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
   >()
   const [activeTool, setActiveTool] = React.useState<CanvasTool>("cursor")
   const [customNodeIds, setCustomNodeIds] = React.useState<string[]>([])
-  const [historyPast, setHistoryPast] = React.useState<GraphSnapshot[]>([])
-  const [historyFuture, setHistoryFuture] = React.useState<GraphSnapshot[]>([])
+  const [undoStack, setUndoStack] = React.useState<ApiSnapshot[]>([])
+  const [redoStack, setRedoStack] = React.useState<ApiSnapshot[]>([])
+  const isApplyingRef = React.useRef(false)
   const [selectedNodeIds, setSelectedNodeIds] = React.useState<string[]>([])
   const [containerSize, setContainerSize] = React.useState({
     width: 1180,
@@ -226,6 +232,11 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       nodeId: string
       payload: Partial<CreateGraphNodePayload>
     }) => updateGraphNode(graphId, nodeId, payload),
+    onSuccess: (node) => {
+      queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+        upsertById(prev ?? [], node)
+      )
+    },
     onError: (error) => {
       toast.error(getApiErrorMessage(error))
     },
@@ -257,27 +268,140 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       }),
     [nodes, selectedNodeIds]
   )
-  const createSnapshot = React.useCallback(
-    (): GraphSnapshot => ({
-      nodes,
-      edges: graphEdges,
-      customNodeIds,
+  const captureSnapshot = React.useCallback(
+    (): ApiSnapshot => ({
+      nodes: queryClient.getQueryData<ApiGraphNode[]>(nodesQueryKey) ?? [],
+      edges: queryClient.getQueryData<ApiGraphEdge[]>(edgesQueryKey) ?? [],
     }),
-    [customNodeIds, graphEdges, nodes]
+    [queryClient, nodesQueryKey, edgesQueryKey]
   )
+
+  const pushHistory = React.useCallback(() => {
+    const snapshot = captureSnapshot()
+    setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+    setRedoStack([])
+  }, [captureSnapshot])
+
+  const applyApiSnapshot = React.useCallback(
+    async (target: ApiSnapshot): Promise<void> => {
+      const current = captureSnapshot()
+
+      const edgesToDelete = current.edges.filter(
+        (e) => !target.edges.some((t) => t.id === e.id)
+      )
+      const nodesToDelete = current.nodes.filter(
+        (n) => !target.nodes.some((t) => t.id === n.id)
+      )
+      const nodesToCreate = target.nodes.filter(
+        (t) => !current.nodes.some((n) => n.id === t.id)
+      )
+      const edgesToCreate = target.edges.filter(
+        (t) => !current.edges.some((e) => e.id === t.id)
+      )
+      const nodesToUpdate = target.nodes.filter((t) => {
+        const curr = current.nodes.find((n) => n.id === t.id)
+        return (
+          curr !== undefined &&
+          (curr.position_x !== t.position_x ||
+            curr.position_y !== t.position_y ||
+            curr.title !== t.title)
+        )
+      })
+
+      // id mapping: old snapshot id → newly created server id
+      const idMap = new Map<string, string>()
+
+      try {
+        for (const edge of edgesToDelete) {
+          await deleteGraphEdge(graphId, edge.id)
+          queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (prev) =>
+            (prev ?? []).filter((e) => e.id !== edge.id)
+          )
+        }
+
+        for (const node of nodesToDelete) {
+          await deleteGraphNode(graphId, node.id)
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            (prev ?? []).filter((n) => n.id !== node.id)
+          )
+        }
+
+        for (const node of nodesToCreate) {
+          const created = await createGraphNode(graphId, {
+            title: node.title,
+            node_type: node.node_type,
+            position_x: node.position_x,
+            position_y: node.position_y,
+            color: node.color,
+            size: node.size,
+            accent: node.accent,
+            node_ids: node.node_ids,
+          })
+          idMap.set(node.id, created.id)
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            upsertById(prev ?? [], created)
+          )
+        }
+
+        for (const edge of edgesToCreate) {
+          const srcId = idMap.get(edge.source_node_id) ?? edge.source_node_id
+          const tgtId = idMap.get(edge.target_node_id) ?? edge.target_node_id
+          const created = await createGraphEdge(graphId, {
+            source_node_id: srcId,
+            target_node_id: tgtId,
+          })
+          queryClient.setQueryData<ApiGraphEdge[]>(edgesQueryKey, (prev) =>
+            upsertById(prev ?? [], created)
+          )
+        }
+
+        for (const node of nodesToUpdate) {
+          const updated = await updateGraphNode(graphId, node.id, {
+            title: node.title,
+            node_type: node.node_type,
+            position_x: node.position_x,
+            position_y: node.position_y,
+            color: node.color,
+            size: node.size,
+            accent: node.accent,
+            node_ids: node.node_ids,
+          })
+          queryClient.setQueryData<ApiGraphNode[]>(nodesQueryKey, (prev) =>
+            upsertById(prev ?? [], updated)
+          )
+        }
+      } catch (error) {
+        toast.error(getApiErrorMessage(error))
+      }
+    },
+    [captureSnapshot, graphId, queryClient, nodesQueryKey, edgesQueryKey]
+  )
+
   const addLessonNode = React.useCallback(
     (position: { x: number; y: number }) => {
+      const snapshot = captureSnapshot()
       nextCustomNodeId.current += 1
 
-      createNodeMutation.mutate({
-        title: getNextDefaultNodeLabel(nodes, "lesson"),
-        node_type: "lesson",
-        position_x: position.x,
-        position_y: position.y,
-        size: 56,
-      })
+      createNodeMutation.mutate(
+        {
+          title: getNextDefaultNodeLabel(nodes, "lesson"),
+          node_type: "lesson",
+          position_x: position.x,
+          position_y: position.y,
+          size: 56,
+        },
+        {
+          onSuccess: () => {
+            setUndoStack((prev) => [
+              ...prev.slice(-(MAX_HISTORY - 1)),
+              snapshot,
+            ])
+            setRedoStack([])
+          },
+        }
+      )
     },
-    [createNodeMutation, nodes]
+    [captureSnapshot, createNodeMutation, nodes]
   )
   const addClusterAroundSelection = React.useCallback(() => {
     const selectedNodes = nodes.filter(
@@ -289,19 +413,31 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       return
     }
 
+    const snapshot = captureSnapshot()
     const circle = getContainingCircle(selectedNodes, scale)
     nextCustomNodeId.current += 1
 
-    createNodeMutation.mutate({
-      title: "Cluster",
-      node_type: "cluster",
-      position_x: circle.center.x,
-      position_y: circle.center.y,
-      size: circle.size,
-      accent: "right",
-      node_ids: selectedGroupNodeIds,
-    })
-  }, [createNodeMutation, nodes, scale, selectedGroupNodeIds])
+    createNodeMutation.mutate(
+      {
+        title: "Cluster",
+        node_type: "cluster",
+        position_x: circle.center.x,
+        position_y: circle.center.y,
+        size: circle.size,
+        accent: "right",
+        node_ids: selectedGroupNodeIds,
+      },
+      {
+        onSuccess: () => {
+          setUndoStack((prev) => [
+            ...prev.slice(-(MAX_HISTORY - 1)),
+            snapshot,
+          ])
+          setRedoStack([])
+        },
+      }
+    )
+  }, [captureSnapshot, createNodeMutation, nodes, scale, selectedGroupNodeIds])
   const renameNode = React.useCallback(
     (nodeId: string, label: string) => {
       const targetNode = nodes.find((node) => node.id === nodeId)
@@ -361,6 +497,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
+      pushHistory()
+
       try {
         await deleteNodeMutation.mutateAsync(nodeId)
       } catch {
@@ -406,6 +544,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       graphEdges,
       nodes,
       nodesQueryKey,
+      pushHistory,
       queryClient,
       scale,
       setGraphEdges,
@@ -444,6 +583,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         y: sourceNode.position.y + Math.sin(angle) * distance,
       }
 
+      const snapshot = captureSnapshot()
       nextCustomNodeId.current += 1
 
       try {
@@ -461,6 +601,10 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         })
         const flowEdge = createApiGraphEdge(edge)
 
+        // Both mutations succeeded — push "before" snapshot to history
+        setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+        setRedoStack([])
+
         setGraphEdges((currentEdges) => [...currentEdges, flowEdge])
         setNodes((currentNodes) =>
           runGraphPhysics(currentNodes, [...graphEdges, flowEdge], scale)
@@ -471,6 +615,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       }
     },
     [
+      captureSnapshot,
       createEdgeMutation,
       createNodeMutation,
       graphEdges,
@@ -480,38 +625,69 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       setNodes,
     ]
   )
-  const undo = React.useCallback(() => {
-    setHistoryPast((currentHistory) => {
-      const previousSnapshot = currentHistory.at(-1)
+  const undo = React.useCallback(async () => {
+    if (isApplyingRef.current) return
+    if (
+      createNodeMutation.isPending ||
+      updateNodeMutation.isPending ||
+      deleteNodeMutation.isPending ||
+      createEdgeMutation.isPending
+    )
+      return
 
-      if (!previousSnapshot) {
-        return currentHistory
-      }
+    const target = undoStack.at(-1)
+    if (!target) return
 
-      setHistoryFuture((currentFuture) => [createSnapshot(), ...currentFuture])
-      setNodes(previousSnapshot.nodes)
-      setGraphEdges(previousSnapshot.edges)
-      setCustomNodeIds(previousSnapshot.customNodeIds)
+    isApplyingRef.current = true
+    try {
+      const before = captureSnapshot()
+      setUndoStack((prev) => prev.slice(0, -1))
+      setRedoStack((prev) => [before, ...prev])
+      await applyApiSnapshot(target)
+    } finally {
+      isApplyingRef.current = false
+    }
+  }, [
+    undoStack,
+    captureSnapshot,
+    applyApiSnapshot,
+    createNodeMutation.isPending,
+    updateNodeMutation.isPending,
+    deleteNodeMutation.isPending,
+    createEdgeMutation.isPending,
+  ])
 
-      return currentHistory.slice(0, -1)
-    })
-  }, [createSnapshot, setGraphEdges, setNodes])
-  const redo = React.useCallback(() => {
-    setHistoryFuture((currentFuture) => {
-      const nextSnapshot = currentFuture[0]
+  const redo = React.useCallback(async () => {
+    if (isApplyingRef.current) return
+    if (
+      createNodeMutation.isPending ||
+      updateNodeMutation.isPending ||
+      deleteNodeMutation.isPending ||
+      createEdgeMutation.isPending
+    )
+      return
 
-      if (!nextSnapshot) {
-        return currentFuture
-      }
+    const target = redoStack[0]
+    if (!target) return
 
-      setHistoryPast((currentHistory) => [...currentHistory, createSnapshot()])
-      setNodes(nextSnapshot.nodes)
-      setGraphEdges(nextSnapshot.edges)
-      setCustomNodeIds(nextSnapshot.customNodeIds)
-
-      return currentFuture.slice(1)
-    })
-  }, [createSnapshot, setGraphEdges, setNodes])
+    isApplyingRef.current = true
+    try {
+      const before = captureSnapshot()
+      setRedoStack((prev) => prev.slice(1))
+      setUndoStack((prev) => [...prev, before])
+      await applyApiSnapshot(target)
+    } finally {
+      isApplyingRef.current = false
+    }
+  }, [
+    redoStack,
+    captureSnapshot,
+    applyApiSnapshot,
+    createNodeMutation.isPending,
+    updateNodeMutation.isPending,
+    deleteNodeMutation.isPending,
+    createEdgeMutation.isPending,
+  ])
   const handleNodesChange = React.useCallback(
     (changes: NodeChange<GraphNode>[]) => {
       setNodes((currentNodes) =>
@@ -544,12 +720,18 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
+      const snapshot = captureSnapshot()
+
       try {
         const edge = await createEdgeMutation.mutateAsync({
           source_node_id: connection.source,
           target_node_id: connection.target,
         })
         const flowEdge = createApiGraphEdge(edge)
+
+        // Mutation succeeded — push "before" snapshot to history
+        setUndoStack((prev) => [...prev.slice(-(MAX_HISTORY - 1)), snapshot])
+        setRedoStack([])
 
         setGraphEdges((currentEdges) => addEdge(flowEdge, currentEdges))
         setNodes((currentNodes) =>
@@ -559,7 +741,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
     },
-    [createEdgeMutation, graphEdges, nodes, scale, setGraphEdges, setNodes]
+    [captureSnapshot, createEdgeMutation, graphEdges, nodes, scale, setGraphEdges, setNodes]
   )
   const handleSelectionChange = React.useCallback(
     ({ nodes: selectedNodes }: { nodes: GraphNode[] }) => {
@@ -632,6 +814,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         draggedNode.id
       )
 
+      pushHistory()
       setNodes(normalizedNodes)
 
       for (const node of normalizedNodes) {
@@ -641,7 +824,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         })
       }
     },
-    [getNodes, graphEdges, scale, setNodes, updateNodeMutation]
+    [getNodes, graphEdges, pushHistory, scale, setNodes, updateNodeMutation]
   )
 
   React.useEffect(() => {
@@ -690,12 +873,28 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     })
   }, [containerSize.height, containerSize.width, fitView, nodes.length])
 
+  React.useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!event.ctrlKey && !event.metaKey) return
+      if (event.key === "z" && !event.shiftKey) {
+        event.preventDefault()
+        void undo()
+      } else if (event.key === "y" || (event.key === "z" && event.shiftKey)) {
+        event.preventDefault()
+        void redo()
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [undo, redo])
+
   const nodeActionContextValue = React.useMemo(
     () => ({
       activeNodeId,
       addConnectedNode,
       closeNodeMenu: () => setActiveNodeId(null),
       deleteNode,
+      graphId,
       openNodeMenu: setActiveNodeId,
       openNodePage: (nodeId: string) => {
         setActiveNodeId(null)
@@ -714,8 +913,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
       <GraphCanvasToolbar
         activeTool={activeTool}
         canCreateCircle={selectedGroupNodeIds.length > 0}
-        canRedo={historyFuture.length > 0}
-        canUndo={historyPast.length > 0}
+        canRedo={redoStack.length > 0}
+        canUndo={undoStack.length > 0}
         onCreateCircle={addClusterAroundSelection}
         onRedo={redo}
         onToolChange={setActiveTool}
@@ -727,7 +926,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
           !graphEdgesQuery.isLoading &&
           nodes.length === 0
         }
-        isError={graphNodesQuery.isError || graphEdgesQuery.isError}
+        isError={graphNodesQuery.isError}
         isLoading={graphNodesQuery.isLoading || graphEdgesQuery.isLoading}
       />
       <NodeActionContext.Provider value={nodeActionContextValue}>
@@ -998,6 +1197,23 @@ function ClusterNodeView({ data }: NodeProps<ClusterNode>) {
 }
 
 function QuizNodeView({ data, id }: NodeProps<QuizNode>) {
+  const router = useRouter()
+
+  if (data.falkordbDeadlineId) {
+    const deadlineId = data.falkordbDeadlineId
+    return (
+      <div
+        className="cursor-pointer rounded-full bg-[#4a252b]/85 px-4 py-1 text-sm font-semibold text-[#b9545c]"
+        onClick={() => router.push(`/dashboard/deadlines/${deadlineId}`)}
+        onKeyDown={(e) => { if (e.key === "Enter") router.push(`/dashboard/deadlines/${deadlineId}`) }}
+        role="button"
+        tabIndex={0}
+      >
+        {data.label}
+      </div>
+    )
+  }
+
   return (
     <NodeActionPopover label={data.label} nodeId={id} nodeType="quiz">
       <div className="rounded-full bg-[#4a252b]/85 px-4 py-1 text-sm font-semibold text-[#b9545c]">
@@ -1019,29 +1235,61 @@ function NodeActionPopover({
   nodeType: "lesson" | "topic" | "quiz"
 }) {
   const actions = useNodeActions()
-  const [labelDraft, setLabelDraft] = React.useState(label)
+  const isOpen = actions.activeNodeId === nodeId
+
+  const tasksQuery = useQuery({
+    queryKey: ["tasks", actions.graphId],
+    queryFn: () => listTasksByGraph(actions.graphId),
+    enabled: isOpen,
+    staleTime: 30_000,
+  })
+
+  const edgesQuery = useQuery({
+    queryKey: ["graph-edges", actions.graphId],
+    queryFn: () => listGraphEdges(actions.graphId),
+    enabled: Boolean(actions.graphId),
+    staleTime: 30_000,
+  })
+
+  const nodesQuery = useQuery({
+    queryKey: ["graph-nodes", actions.graphId],
+    queryFn: () => listGraphNodes(actions.graphId),
+    enabled: Boolean(actions.graphId),
+    staleTime: 30_000,
+  })
+
+  const taskCount = React.useMemo(
+    () => (tasksQuery.data ?? []).filter((t) => t.topic_id === nodeId).length,
+    [tasksQuery.data, nodeId]
+  )
+
+  const subnodeCount = React.useMemo(() => {
+    const graphEdges = edgesQuery.data ?? []
+    const graphNodesData = nodesQuery.data ?? []
+    const connectedIds = new Set(
+      graphEdges
+        .filter((e) => e.source_node_id === nodeId || e.target_node_id === nodeId)
+        .flatMap((e) => [e.source_node_id, e.target_node_id])
+        .filter((id) => id !== nodeId)
+    )
+    return graphNodesData.filter(
+      (n) => n.node_type === "topic" && connectedIds.has(n.id)
+    ).length
+  }, [edgesQuery.data, nodesQuery.data, nodeId])
+
   const pointerStartRef = React.useRef<{
     hasMoved: boolean
     x: number
     y: number
   } | null>(null)
-  const isOpen = actions.activeNodeId === nodeId
 
-  const handleSubmit = React.useCallback(
-    (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      actions.renameNode(nodeId, labelDraft)
-    },
-    [actions, labelDraft, nodeId]
-  )
   const openContextMenu = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault()
       event.stopPropagation()
-      setLabelDraft(label)
       actions.openNodeMenu(nodeId)
     },
-    [actions, label, nodeId]
+    [actions, nodeId]
   )
   const handleNodeClickCapture = React.useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1129,82 +1377,64 @@ function NodeActionPopover({
       />
       <PopoverContent
         align="center"
-        className="nodrag nopan nowheel w-72 gap-3 rounded-lg border border-white/10 bg-neutral-900 p-3 text-neutral-100 shadow-2xl ring-white/10"
+        className="nodrag nopan nowheel w-60 rounded-xl border border-white/10 bg-neutral-900 p-3 text-neutral-100 shadow-2xl"
         side="top"
         sideOffset={12}
       >
-        <PopoverHeader>
-          <PopoverTitle className="text-sm text-neutral-50">
-            Node menu
-          </PopoverTitle>
-          <PopoverDescription className="text-xs text-neutral-400">
-            Edit text or create a linked item.
-          </PopoverDescription>
-        </PopoverHeader>
+        {/* Node title */}
+        <div className="mb-2 flex items-center gap-2 px-1">
+          <div className="h-2 w-2 shrink-0 rounded-full bg-green-500" />
+          <span className="truncate text-sm font-medium text-neutral-100">
+            {label || nodeType}
+          </span>
+        </div>
 
-        <form className="flex flex-col gap-2" onSubmit={handleSubmit}>
-          <Label
-            className="text-xs text-neutral-300"
-            htmlFor={`${nodeId}-text`}
-          >
-            Text
-          </Label>
-          <Input
-            id={`${nodeId}-text`}
-            value={labelDraft}
-            onChange={(event) => setLabelDraft(event.target.value)}
-            placeholder={nodeType === "topic" ? "Topic name" : "Node text"}
-          />
+        <Separator className="mb-1 bg-white/10" />
+
+        {/* Info rows */}
+        <div className="mb-1 flex flex-col">
+          <div className="flex items-center justify-between rounded-md px-1 py-1.5 text-sm text-neutral-400">
+            <div className="flex items-center gap-2">
+              <Paperclip className="size-4 shrink-0" />
+              <span>uploaded materials</span>
+            </div>
+            <ChevronRight className="size-4 shrink-0" />
+          </div>
+          <div className="flex items-center justify-between rounded-md px-1 py-1.5 text-sm text-neutral-400">
+            <span>{taskCount} tasks</span>
+            <ChevronRight className="size-4 shrink-0" />
+          </div>
+          <div className="flex items-center justify-between rounded-md px-1 py-1.5 text-sm text-neutral-400">
+            <span>{subnodeCount} subnodes</span>
+            <ChevronRight className="size-4 shrink-0" />
+          </div>
+        </div>
+
+        <Separator className="mb-1 bg-white/10" />
+
+        {/* Actions */}
+        <div className="grid gap-0.5">
           <Button
-            className="w-full"
+            className="justify-start text-neutral-200"
+            onClick={() => actions.openNodePage(nodeId)}
             size="sm"
-            type="submit"
-            variant="secondary"
+            type="button"
+            variant="ghost"
           >
             <PencilLine className="size-4" />
-            Save text
+            change node
           </Button>
-        </form>
-
-        {nodeType !== "quiz" ? (
-          <>
-            <Separator className="bg-white/10" />
-
-            <div className="grid">
-              <Button
-                className="justify-start"
-                onClick={() => actions.addConnectedNode(nodeId, "lesson")}
-                type="button"
-                variant="ghost"
-              >
-                <Plus className="size-4" />
-                {nodeType === "topic"
-                  ? "Add linked lecture"
-                  : "Add linked node"}
-              </Button>
-              {nodeType === "lesson" ? (
-                <Button
-                  className="justify-start"
-                  onClick={() => actions.addConnectedNode(nodeId, "topic")}
-                  type="button"
-                  variant="ghost"
-                >
-                  <Circle className="size-4 fill-[#61bd61] text-[#61bd61]" />
-                  Add linked topic
-                </Button>
-              ) : null}
-              <Button
-              className="justify-start"
-              onClick={() => actions.deleteNode(nodeId)}
-              type="button"
-              variant={"ghost"}
-            >
-              <Trash2 className="size-4" />
-              Delete {nodeType === "topic" ? "topic" : "node"}
-            </Button>
-            </div>
-          </>
-        ) : null}
+          <Button
+            className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
+            onClick={() => actions.deleteNode(nodeId)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <Trash2 className="size-4" />
+            delete node
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   )
@@ -1430,6 +1660,7 @@ function createApiGraphNodes(nodes: ApiGraphNode[]): GraphNode[] {
         position,
         data: {
           label: node.title,
+          falkordbDeadlineId: node.falkordb_deadline_id ?? undefined,
         },
         draggable: false,
         style: { width: "max-content" },

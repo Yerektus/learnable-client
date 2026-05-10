@@ -19,12 +19,13 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { KanbanBoard } from "@/components/kanban-board"
+import { MaterialsTab } from "@/components/materials-tab"
 import { NavUser } from "@/components/nav-user"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { Button, buttonVariants } from "@/components/ui/button"
 import {
   Card,
-  CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
@@ -52,14 +53,8 @@ import {
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import {
-  deleteGraphNode,
-  getGraph,
-  getGraphNode,
-  listGraphNodes,
-  type GraphNode,
-} from "@/lib/api/graphs"
 import { streamNodeChat, type ChatMessage, type ChatType } from "@/lib/api/ai"
+import { getApiErrorMessage } from "@/lib/api/auth"
 import {
   createChat,
   deleteChat,
@@ -68,7 +63,13 @@ import {
   type Chat,
   type ChatMessage as StoredChatMessage,
 } from "@/lib/api/chats"
-import { getApiErrorMessage } from "@/lib/api/auth"
+import {
+  deleteGraphNode,
+  getGraph,
+  getGraphNode,
+  listGraphNodes,
+  type GraphNode,
+} from "@/lib/api/graphs"
 import { useAuthStore } from "@/lib/stores/auth-store"
 import { cn } from "@/lib/utils"
 
@@ -103,6 +104,7 @@ export default function NodePage() {
     queryFn: () => listChats(nodeId),
     enabled: Boolean(nodeId),
   })
+
   const deleteNodeMutation = useMutation({
     mutationFn: () => deleteGraphNode(graphId, nodeId),
     onError: (error) => {
@@ -232,6 +234,7 @@ export default function NodePage() {
               ) : node ? (
                 <NodeWorkspace
                   nodeId={nodeId}
+                  graphId={graphId}
                   activeChatId={activeChatId}
                   chatType={activeChatType}
                 />
@@ -247,6 +250,8 @@ export default function NodePage() {
     </AuthGuard>
   )
 }
+
+// ─── NodeSidebar ──────────────────────────────────────────────────────────────
 
 function NodeSidebar({
   graphId,
@@ -299,22 +304,14 @@ function NodeSidebar({
       </SidebarHeader>
 
       <SidebarContent className="border-r border-sidebar-border">
-        {/* New chat — Popover to pick Theory or Task */}
+        {/* New chat — Popover для выбора Theory или Task */}
         <div className="px-3 py-2 group-data-[collapsible=icon]:px-2">
           <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-            <PopoverTrigger
-              className="flex w-full items-center gap-2 rounded-lg bg-neutral-800 px-3 py-2 text-sm text-neutral-100 transition-colors hover:bg-neutral-700 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2"
-            >
+            <PopoverTrigger className="flex w-full items-center gap-2 rounded-lg bg-neutral-800 px-3 py-2 text-sm text-neutral-100 transition-colors hover:bg-neutral-700 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2">
               <Plus className="size-4 shrink-0" />
-              <span className="group-data-[collapsible=icon]:hidden">
-                New chat
-              </span>
+              <span className="group-data-[collapsible=icon]:hidden">New chat</span>
             </PopoverTrigger>
-            <PopoverContent
-              side="right"
-              align="start"
-              className="w-52 gap-1 p-2"
-            >
+            <PopoverContent side="right" align="start" className="w-52 gap-1 p-2">
               <button
                 type="button"
                 onClick={() => handleSelectType("theory")}
@@ -343,7 +340,7 @@ function NodeSidebar({
           </Popover>
         </div>
 
-        {/* Chats */}
+        {/* Chats list */}
         <SidebarGroup>
           <SidebarGroupLabel className="text-xs uppercase tracking-wider text-neutral-500 group-data-[collapsible=icon]:hidden">
             Chats
@@ -361,47 +358,40 @@ function NodeSidebar({
             ) : (
               <SidebarMenu>
                 {chats.map((chat) => (
-                    <SidebarMenuItem
-                      key={chat.id}
-                      className="group/chat flex items-center"
+                  <SidebarMenuItem key={chat.id} className="group/chat flex items-center">
+                    <SidebarMenuButton
+                      onClick={() => onSelectChat(chat.id)}
+                      isActive={chat.id === activeChatId}
+                      className="flex-1 rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white data-active:bg-white/10"
+                      tooltip={chat.title || "New chat"}
                     >
-                      <SidebarMenuButton
-                        onClick={() => onSelectChat(chat.id)}
-                        isActive={chat.id === activeChatId}
-                        className="flex-1 rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white data-active:bg-white/10"
-                        tooltip={chat.title || "New chat"}
-                      >
-                        <MessageCircle className="size-4 shrink-0" />
-                        <span className="flex-1 truncate">
-                          {chat.title || "New chat"}
-                        </span>
-                        {chat.chat_type === "theory" && (
-                          <span className="text-xs font-semibold text-blue-400">
-                            T
-                          </span>
-                        )}
-                        {chat.chat_type === "task" && (
-                          <span className="text-xs text-yellow-400">⚡</span>
-                        )}
-                      </SidebarMenuButton>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDeleteChat(chat.id)
-                        }}
-                        className="mr-1 hidden size-5 shrink-0 items-center justify-center rounded text-neutral-600 hover:text-red-400 group-hover/chat:flex group-data-[collapsible=icon]:hidden"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
-                    </SidebarMenuItem>
+                      <MessageCircle className="size-4 shrink-0" />
+                      <span className="flex-1 truncate">{chat.title || "New chat"}</span>
+                      {chat.chat_type === "theory" && (
+                        <span className="text-xs font-semibold text-blue-400">T</span>
+                      )}
+                      {chat.chat_type === "task" && (
+                        <span className="text-xs text-yellow-400">⚡</span>
+                      )}
+                    </SidebarMenuButton>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteChat(chat.id)
+                      }}
+                      className="mr-1 hidden size-5 shrink-0 items-center justify-center rounded text-neutral-600 hover:text-red-400 group-hover/chat:flex group-data-[collapsible=icon]:hidden"
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  </SidebarMenuItem>
                 ))}
               </SidebarMenu>
             )}
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Nodes (collapsible) */}
+        {/* Nodes list (collapsible) */}
         <SidebarGroup>
           <button
             type="button"
@@ -428,31 +418,26 @@ function NodeSidebar({
                 </div>
               ) : (
                 <SidebarMenu>
-                  {graphNodes.map((node) => (
-                    <SidebarMenuItem key={node.id}>
+                  {graphNodes.map((n) => (
+                    <SidebarMenuItem key={n.id}>
                       <SidebarMenuButton
                         render={
-                          <Link
-                            href={`/dashboard/graphs/${graphId}/nodes/${node.id}`}
-                          />
+                          <Link href={`/dashboard/graphs/${graphId}/nodes/${n.id}`} />
                         }
-                        isActive={node.id === nodeId}
+                        isActive={n.id === nodeId}
                         className="rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white data-active:bg-white/10"
-                        tooltip={node.title}
+                        tooltip={n.title}
                       >
-                        {node.node_type === "topic" ? (
+                        {n.node_type === "topic" ? (
                           <Circle
                             className="size-4 shrink-0"
-                            fill={node.color ?? "#61bd61"}
+                            fill={n.color ?? "#61bd61"}
                             strokeWidth={1.8}
                           />
                         ) : (
-                          <FileText
-                            className="size-4 shrink-0"
-                            strokeWidth={1.8}
-                          />
+                          <FileText className="size-4 shrink-0" strokeWidth={1.8} />
                         )}
-                        <span className="truncate">{node.title}</span>
+                        <span className="truncate">{n.title}</span>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -475,12 +460,16 @@ function NodeSidebar({
   )
 }
 
+// ─── NodeWorkspace ─────────────────────────────────────────────────────────────
+
 function NodeWorkspace({
   nodeId,
+  graphId,
   activeChatId,
   chatType,
 }: {
   nodeId: string
+  graphId: string
   activeChatId: string | null
   chatType: ChatType
 }) {
@@ -495,6 +484,7 @@ function NodeWorkspace({
           <Paperclip className="size-4" />
           Materials
         </TabsTrigger>
+        <TabsTrigger value="kanban">Kanban</TabsTrigger>
       </TabsList>
 
       <TabsContent value="chat">
@@ -505,19 +495,18 @@ function NodeWorkspace({
         />
       </TabsContent>
 
-      <TabsContent value="materials" className="min-h-80">
-        <Card className="h-full rounded-lg border-white/10 bg-white/[0.03] text-neutral-100">
-          <CardHeader>
-            <CardTitle className="text-lg">Materials</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-neutral-500">
-            No materials yet.
-          </CardContent>
-        </Card>
+      <TabsContent value="materials" className="min-h-0">
+        <MaterialsTab nodeId={nodeId} />
+      </TabsContent>
+
+      <TabsContent value="kanban" className="min-h-0 pt-2">
+        <KanbanBoard graphId={graphId} />
       </TabsContent>
     </Tabs>
   )
 }
+
+// ─── ChatPanel ─────────────────────────────────────────────────────────────────
 
 function ChatPanel({
   nodeId,
@@ -529,10 +518,7 @@ function ChatPanel({
   chatType: ChatType
 }) {
   const queryClient = useQueryClient()
-  // Optimistic messages for the current in-flight turn only
-  const [streamingMessages, setStreamingMessages] = React.useState<
-    ChatMessage[]
-  >([])
+  const [streamingMessages, setStreamingMessages] = React.useState<ChatMessage[]>([])
   const [input, setInput] = React.useState("")
   const [isStreaming, setIsStreaming] = React.useState(false)
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
@@ -544,7 +530,7 @@ function ChatPanel({
     enabled: Boolean(activeChatId),
   })
 
-  // Merge server history with the optimistic streaming pair
+  // Мёрджим персистированную историю с оптимистичными стриминг-сообщениями
   const serverMessages: ChatMessage[] = (messagesQuery.data ?? []).map(
     (m: StoredChatMessage) => ({ role: m.role, content: m.content }),
   )
@@ -554,6 +540,7 @@ function ChatPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [displayMessages.length, isStreaming])
 
+  // Сбрасываем при смене чата
   React.useEffect(() => {
     setStreamingMessages([])
     setInput("")
@@ -590,10 +577,7 @@ function ChatPanel({
           const updated = [...prev]
           const last = updated[updated.length - 1]
           if (last?.role === "assistant") {
-            updated[updated.length - 1] = {
-              ...last,
-              content: last.content + token,
-            }
+            updated[updated.length - 1] = { ...last, content: last.content + token }
           }
           return updated
         })
@@ -603,12 +587,12 @@ function ChatPanel({
       setStreamingMessages([])
     } finally {
       setIsStreaming(false)
-      // Refetch persisted history then drop optimistic messages (no flicker)
+      // Рефетчим персистированную историю, убираем оптимистичные сообщения
       queryClient
         .refetchQueries({ queryKey: ["chat-messages", activeChatId] })
         .then(() => setStreamingMessages([]))
         .catch(() => setStreamingMessages([]))
-      // Refresh chat title in sidebar (backend sets it after first message)
+      // Обновляем заголовок чата в сайдбаре
       void queryClient.invalidateQueries({ queryKey: ["chats", nodeId] })
     }
   }
@@ -616,7 +600,7 @@ function ChatPanel({
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -653,9 +637,7 @@ function ChatPanel({
         ) : displayMessages.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
             <MessageCircle className="size-10 text-neutral-600" />
-            <p className="text-sm text-neutral-400">
-              Ask anything about this topic
-            </p>
+            <p className="text-sm text-neutral-400">Ask anything about this topic</p>
             <p className="text-xs text-neutral-600">
               {chatType === "theory"
                 ? "Theory mode — explains concepts"
@@ -689,7 +671,7 @@ function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Pill input */}
+      {/* Input */}
       <div className="border-t border-white/10 p-3">
         <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-neutral-900 px-4 py-2.5">
           <textarea
@@ -712,7 +694,7 @@ function ChatPanel({
           />
           <button
             type="button"
-            onClick={handleSend}
+            onClick={() => void handleSend()}
             disabled={isStreaming || !input.trim()}
             className="mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-neutral-700 text-neutral-100 transition-colors hover:bg-neutral-600 disabled:opacity-40"
           >

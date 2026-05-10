@@ -5,8 +5,15 @@ export type Graph = {
   owner_id: string
   name: string
   description: string | null
+  custom_prompt: string | null
   created_at: string
   updated_at: string
+}
+
+export type UpdateGraphPayload = {
+  name?: string
+  description?: string | null
+  custom_prompt?: string | null
 }
 
 export type GraphNode = {
@@ -24,6 +31,7 @@ export type GraphNode = {
   node_ids: string[]
   created_at: string
   updated_at: string
+  falkordb_deadline_id: string | null
 }
 
 export type GraphEdge = {
@@ -51,6 +59,7 @@ export type CreateGraphNodePayload = {
   size?: number | null
   accent?: "left" | "right" | null
   node_ids?: string[]
+  falkordb_deadline_id?: string | null
 }
 
 export type UpdateGraphNodePayload = Partial<CreateGraphNodePayload>
@@ -74,6 +83,12 @@ export async function createGraph(payload: CreateGraphPayload) {
 
 export async function getGraph(graphId: string) {
   const { data } = await coreApi.get<Graph>(`/api/v1/graphs/${graphId}`)
+
+  return data
+}
+
+export async function updateGraph(graphId: string, payload: UpdateGraphPayload) {
+  const { data } = await coreApi.patch<Graph>(`/api/v1/graphs/${graphId}`, payload)
 
   return data
 }
@@ -149,6 +164,21 @@ export async function deleteGraphEdge(
   edgeId: string,
 ): Promise<void> {
   await coreApi.delete(`/api/v1/graphs/${graphId}/edges/${edgeId}`)
+}
+
+export type GraphDeadline = {
+  id: string
+  title: string
+  date: string
+  type: string
+  node_ids: string[]
+}
+
+export async function listGraphDeadlines(graphId: string): Promise<GraphDeadline[]> {
+  const { data } = await coreApi.get<GraphDeadline[]>(
+    `/api/v1/graphs/${graphId}/deadlines`
+  )
+  return data
 }
 
 export const listNodes = listGraphNodes

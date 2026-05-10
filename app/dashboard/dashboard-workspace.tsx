@@ -8,10 +8,12 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 
 import { AuthGuard } from "@/components/auth/auth-guard"
+import { KanbanBoard } from "@/components/kanban-board"
 import { LessonGraphCanvas } from "@/components/lesson-graph-canvas"
 import { NavGraphs, NavGraphsLoading } from "@/components/nav-graphs"
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
+import { PlanningPanel } from "@/components/planning-panel"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { Button } from "@/components/ui/button"
 import {
@@ -52,11 +54,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { KanbanBoard } from "@/components/kanban-board"
-import { PlanningPanel } from "@/components/planning-panel"
+import type { ChatMessage } from "@/lib/api/ai"
 import { getApiErrorMessage } from "@/lib/api/auth"
 import { createGraph, listGraphs } from "@/lib/api/graphs"
-import type { ChatMessage } from "@/lib/api/ai"
 import { useAuthStore } from "@/lib/stores/auth-store"
 import { cn } from "@/lib/utils"
 
@@ -80,21 +80,26 @@ export function DashboardWorkspace({
   )
   const [graphName, setGraphName] = React.useState("")
   const [formError, setFormError] = React.useState<string | null>(null)
+
   const graphsQuery = useQuery({
     queryKey: ["graphs"],
     queryFn: listGraphs,
     enabled: Boolean(accessToken),
   })
+
   const graphs =
     graphsQuery.data?.map((graph) => ({
       id: graph.id,
       name: graph.name,
       url: "#",
       isActive: graph.id === selectedGraphId,
+      custom_prompt: graph.custom_prompt,
     })) ?? []
+
   const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
   const trimmedGraphName = graphName.trim()
 
+  // Сбрасываем историю планировщика при смене графа
   React.useEffect(() => {
     setPlanningMessages([])
   }, [selectedGraphId])
@@ -117,21 +122,16 @@ export function DashboardWorkspace({
 
   function handleCreateGraphSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-
     if (!trimmedGraphName) {
       setFormError("Graph name is required.")
       return
     }
-
     setFormError(null)
     createGraphMutation.mutate({ name: trimmedGraphName })
   }
 
   function closeCreateGraphDialog() {
-    if (createGraphMutation.isPending) {
-      return
-    }
-
+    if (createGraphMutation.isPending) return
     setIsCreateDialogOpen(false)
     setGraphName("")
     setFormError(null)
@@ -199,7 +199,7 @@ export function DashboardWorkspace({
                       </TabsContent>
 
                       <TabsContent value="kanban" className="min-h-0 px-4 pt-6">
-                        <KanbanBoard graphId={selectedGraphId!} />
+                        <KanbanBoard graphId={selectedGraph.id} />
                       </TabsContent>
                     </Tabs>
                   ) : graphsQuery.isLoading ? null : graphs.length > 0 ? (
@@ -213,7 +213,7 @@ export function DashboardWorkspace({
                   )}
                 </div>
 
-                {/* Planning panel */}
+                {/* Planning panel — slide-in справа */}
                 {isPlanningPanelOpen && selectedGraphId && (
                   <PlanningPanel
                     graphId={selectedGraphId}
@@ -265,27 +265,17 @@ export function DashboardWorkspace({
   )
 }
 
-function SelectGraphEmptyState({
-  onSearchGraphs,
-}: {
-  onSearchGraphs: () => void
-}) {
+function SelectGraphEmptyState({ onSearchGraphs }: { onSearchGraphs: () => void }) {
   return (
     <div className="flex min-h-svh items-center justify-center px-6">
       <Empty>
         <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FolderCode />
-          </EmptyMedia>
+          <EmptyMedia variant="icon"><FolderCode /></EmptyMedia>
           <EmptyTitle>No Graph Selected</EmptyTitle>
-          <EmptyDescription>
-            Select an existing graph to open its workspace.
-          </EmptyDescription>
+          <EmptyDescription>Select an existing graph to open its workspace.</EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row justify-center">
-          <Button onClick={onSearchGraphs} variant="outline">
-            Search Graphs
-          </Button>
+          <Button onClick={onSearchGraphs} variant="outline">Search Graphs</Button>
         </EmptyContent>
       </Empty>
     </div>
@@ -297,13 +287,10 @@ function GraphsEmptyState({ onCreateGraph }: { onCreateGraph: () => void }) {
     <div className="flex min-h-svh items-center justify-center px-6">
       <Empty>
         <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FolderCode />
-          </EmptyMedia>
+          <EmptyMedia variant="icon"><FolderCode /></EmptyMedia>
           <EmptyTitle>No Graphs Yet</EmptyTitle>
           <EmptyDescription>
-            You haven&apos;t created any graphs yet. Get started by creating
-            your first graph.
+            You haven&apos;t created any graphs yet. Get started by creating your first graph.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row justify-center">
@@ -315,15 +302,8 @@ function GraphsEmptyState({ onCreateGraph }: { onCreateGraph: () => void }) {
 }
 
 function CreateGraphDialog({
-  open,
-  graphName,
-  formError,
-  isPending,
-  canSubmit,
-  onOpenChange,
-  onGraphNameChange,
-  onCancel,
-  onSubmit,
+  open, graphName, formError, isPending, canSubmit,
+  onOpenChange, onGraphNameChange, onCancel, onSubmit,
 }: {
   open: boolean
   graphName: string
@@ -341,11 +321,8 @@ function CreateGraphDialog({
         <form onSubmit={onSubmit} className="grid gap-5">
           <DialogHeader>
             <DialogTitle>New graph</DialogTitle>
-            <DialogDescription className="sr-only">
-              Enter a graph name.
-            </DialogDescription>
+            <DialogDescription className="sr-only">Enter a graph name.</DialogDescription>
           </DialogHeader>
-
           <Field>
             <FieldLabel htmlFor="graph-name">Name</FieldLabel>
             <Input
@@ -359,14 +336,8 @@ function CreateGraphDialog({
             />
             {formError ? <FieldError>{formError}</FieldError> : null}
           </Field>
-
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onCancel}
-              disabled={isPending}
-            >
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
               Cancel
             </Button>
             <Button type="submit" disabled={!canSubmit || isPending}>
@@ -381,28 +352,15 @@ function CreateGraphDialog({
 }
 
 function GraphSearchDialog({
-  open,
-  graphs,
-  onOpenChange,
-  onSelectGraph,
+  open, graphs, onOpenChange, onSelectGraph,
 }: {
   open: boolean
-  graphs: {
-    id: string
-    name: string
-    url: string
-    isActive?: boolean
-  }[]
+  graphs: { id: string; name: string; url: string; isActive?: boolean }[]
   onOpenChange: (open: boolean) => void
   onSelectGraph: (graphId: string) => void
 }) {
   return (
-    <CommandDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Search graphs"
-      description="Search and select a graph."
-    >
+    <CommandDialog open={open} onOpenChange={onOpenChange} title="Search graphs" description="Search and select a graph.">
       <Command>
         <CommandInput placeholder="Search graphs..." />
         <CommandList>
@@ -426,15 +384,8 @@ function GraphSearchDialog({
 }
 
 function AppSidebar({
-  userName,
-  onLogout,
-  graphs,
-  isLoadingGraphs,
-  onCreateGraph,
-  onSearchGraphs,
-  onOpenSettings,
-  onSelectGraph,
-  ...props
+  userName, onLogout, graphs, isLoadingGraphs,
+  onCreateGraph, onSearchGraphs, onOpenSettings, onSelectGraph, ...props
 }: {
   userName: string
   onLogout: () => void
@@ -443,6 +394,7 @@ function AppSidebar({
     name: string
     url: string
     isActive?: boolean
+    custom_prompt: string | null
   }[]
   isLoadingGraphs: boolean
   onCreateGraph: () => void
@@ -451,24 +403,10 @@ function AppSidebar({
   onSelectGraph: (graphId: string) => void
 } & ComponentProps<typeof Sidebar>) {
   const data = {
-    user: {
-      name: userName,
-      email: "Profile",
-      avatar: "",
-    },
+    user: { name: userName, email: "Profile", avatar: "" },
     navMain: [
-      {
-        title: "new graph",
-        url: "#",
-        icon: SquareTerminal,
-        onSelect: onCreateGraph,
-      },
-      {
-        title: "search graphs",
-        url: "#",
-        search: true,
-        onSelect: onSearchGraphs,
-      },
+      { title: "new graph", url: "#", icon: SquareTerminal, onSelect: onCreateGraph },
+      { title: "search graphs", url: "#", search: true, onSelect: onSearchGraphs },
     ],
     graphs,
   }
@@ -477,9 +415,7 @@ function AppSidebar({
     <Sidebar collapsible="icon" className="bg-neutral-950" {...props}>
       <SidebarHeader className="border-r border-sidebar-border">
         <div className="flex items-center justify-between gap-3 px-3 text-neutral-100 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2">
-          <span className="text-2xl font-medium group-data-[collapsible=icon]:hidden">
-            Learnable
-          </span>
+          <span className="text-2xl font-medium group-data-[collapsible=icon]:hidden">Learnable</span>
           <SidebarTrigger className="size-8 text-neutral-400 group-data-[state=collapsed]:cursor-e-resize group-data-[state=expanded]:cursor-w-resize hover:bg-white/10 hover:text-neutral-100" />
         </div>
       </SidebarHeader>
@@ -492,11 +428,7 @@ function AppSidebar({
         )}
       </SidebarContent>
       <SidebarFooter className="border-r border-sidebar-border">
-        <NavUser
-          user={data.user}
-          onLogout={onLogout}
-          onOpenSettings={onOpenSettings}
-        />
+        <NavUser user={data.user} onLogout={onLogout} onOpenSettings={onOpenSettings} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
