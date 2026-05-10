@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation"
 import * as React from "react"
 import {
   BookOpen,
+  CalendarDays,
   ChevronRight,
   Circle,
   Hand,
+  Loader2,
   MousePointer2,
   Paperclip,
   PencilLine,
@@ -68,6 +70,7 @@ import {
   type GraphEdge as ApiGraphEdge,
   type GraphNode as ApiGraphNode,
 } from "@/lib/api/graphs"
+import { createManualDeadline } from "@/lib/api/ai"
 import { getApiErrorMessage } from "@/lib/api/auth"
 import { listTasksByGraph } from "@/lib/api/tasks"
 import { cn } from "@/lib/utils"
@@ -1302,18 +1305,183 @@ function TopicNodeView({ data, id }: NodeProps<TopicNode>) {
   )
 }
 
-function ClusterNodeView({ data }: NodeProps<ClusterNode>) {
+function ClusterNodeView({ data, id }: NodeProps<ClusterNode>) {
   return (
-    <div
-      className="relative rounded-full border border-dashed border-white/45"
-      style={{ width: data.size, height: data.size }}
+    <ClusterActionPopover nodeId={id} nodeIds={data.nodeIds ?? []}>
+      <div
+        className="relative rounded-full border border-dashed border-white/45"
+        style={{ width: data.size, height: data.size }}
+      >
+        <span
+          className={`absolute -inset-px rounded-full border border-dashed border-transparent ${
+            data.accent === "left" ? "border-r-red-500/70" : "border-r-red-500/35"
+          }`}
+        />
+      </div>
+    </ClusterActionPopover>
+  )
+}
+
+function ClusterActionPopover({
+  children,
+  nodeId,
+  nodeIds,
+}: {
+  children: React.ReactNode
+  nodeId: string
+  nodeIds: string[]
+}) {
+  const actions = useNodeActions()
+  const queryClient = useQueryClient()
+  const isOpen = actions.activeNodeId === nodeId
+  const [title, setTitle] = React.useState("")
+  const [date, setDate] = React.useState("")
+
+  const pointerStartRef = React.useRef<{ hasMoved: boolean; x: number; y: number } | null>(null)
+
+  const handleClickCapture = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.button !== 0 || pointerStartRef.current?.hasMoved) {
+        pointerStartRef.current = null
+        return
+      }
+      pointerStartRef.current = null
+      actions.openNodeMenu(nodeId)
+    },
+    [actions, nodeId],
+  )
+
+  const handlePointerDown = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        pointerStartRef.current = null
+        return
+      }
+      pointerStartRef.current = { hasMoved: false, x: event.clientX, y: event.clientY }
+    },
+    [],
+  )
+
+  const handlePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current
+    if (!start) return
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5) {
+      start.hasMoved = true
+    }
+  }, [])
+
+  const convertMutation = useMutation({
+    mutationFn: async () => {
+      const { deadline_id } = await createManualDeadline({
+        graph_id: actions.graphId,
+        title,
+        date,
+        type: "quiz",
+        node_ids: nodeIds,
+      })
+      await updateGraphNode(actions.graphId, nodeId, {
+        node_type: "quiz",
+        title,
+        falkordb_deadline_id: deadline_id,
+      })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["graph-nodes", actions.graphId] })
+      actions.closeNodeMenu()
+      toast.success("Converted to deadline")
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteGraphNode(actions.graphId, nodeId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["graph-nodes", actions.graphId] })
+      actions.closeNodeMenu()
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  })
+
+  return (
+    <Popover
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) actions.closeNodeMenu()
+      }}
     >
-      <span
-        className={`absolute -inset-px rounded-full border border-dashed border-transparent ${
-          data.accent === "left" ? "border-r-red-500/70" : "border-r-red-500/35"
-        }`}
+      <PopoverTrigger
+        nativeButton={false}
+        render={
+          <div
+            aria-label="Open cluster options"
+            className="cursor-pointer"
+            onClickCapture={handleClickCapture}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            role="button"
+            tabIndex={0}
+          >
+            {children}
+          </div>
+        }
       />
-    </div>
+      <PopoverContent
+        align="center"
+        className="nodrag nopan nowheel w-64 rounded-xl border border-white/10 bg-neutral-900 p-3 text-neutral-100 shadow-2xl"
+        side="top"
+        sideOffset={12}
+      >
+        <div className="mb-2 px-1">
+          <p className="text-sm font-medium text-neutral-300">Convert to deadline</p>
+        </div>
+        <Separator className="mb-3 bg-white/10" />
+        <div className="grid gap-2">
+          <input
+            autoFocus
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title (e.g. Midterm Exam)"
+            className="w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600 focus:border-white/25"
+          />
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-sm text-neutral-100 outline-none focus:border-white/25"
+          />
+        </div>
+        <div className="mt-3 grid gap-0.5">
+          <Button
+            className="justify-start text-neutral-200"
+            disabled={!title || !date || convertMutation.isPending}
+            onClick={() => convertMutation.mutate()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            {convertMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <CalendarDays className="size-4" />
+            )}
+            Convert to deadline
+          </Button>
+          <Button
+            className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
+            disabled={deleteMutation.isPending}
+            onClick={() => deleteMutation.mutate()}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -1999,7 +2167,6 @@ function createApiGraphNodes(nodes: ApiGraphNode[]): GraphNode[] {
           nodeIds: node.node_ids,
         },
         draggable: false,
-        selectable: false,
         style: {
           width: size,
           height: size,

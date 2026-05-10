@@ -194,6 +194,32 @@ export async function* streamDeadlinePrep(
   }
 }
 
+export type ManualDeadlineResponse = {
+  deadline_id: string
+}
+
+export async function createManualDeadline(params: {
+  graph_id: string
+  title: string
+  date: string
+  type: "exam" | "quiz" | "assignment"
+  node_ids: string[]
+}): Promise<ManualDeadlineResponse> {
+  const token = useAuthStore.getState().accessToken
+  const response = await fetch(`${API_BASE_URL}/api/v1/ai/deadlines/manual`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(params),
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to create deadline: ${response.status}`)
+  }
+  return response.json() as Promise<ManualDeadlineResponse>
+}
+
 export async function generateGraphFromFile(
   graphId: string,
   file: File,
