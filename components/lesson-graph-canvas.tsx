@@ -1494,6 +1494,8 @@ function NodeActionPopover({
 }) {
   const actions = useNodeActions()
   const isOpen = actions.activeNodeId === nodeId
+  const [isRenaming, setIsRenaming] = React.useState(false)
+  const [renameValue, setRenameValue] = React.useState("")
 
   const tasksQuery = useQuery({
     queryKey: ["tasks", actions.graphId],
@@ -1612,6 +1614,7 @@ function NodeActionPopover({
       onOpenChange={(open) => {
         if (!open) {
           actions.closeNodeMenu()
+          setIsRenaming(false)
         }
       }}
     >
@@ -1671,28 +1674,75 @@ function NodeActionPopover({
         <Separator className="mb-1 bg-white/10" />
 
         {/* Actions */}
-        <div className="grid gap-0.5">
-          <Button
-            className="justify-start text-neutral-200"
-            onClick={() => actions.openNodePage(nodeId)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <PencilLine className="size-4" />
-            change node
-          </Button>
-          <Button
-            className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
-            onClick={() => actions.deleteNode(nodeId)}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            <Trash2 className="size-4" />
-            delete node
-          </Button>
-        </div>
+        {isRenaming ? (
+          <div className="grid gap-2 pt-1">
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  actions.renameNode(nodeId, renameValue)
+                  setIsRenaming(false)
+                  actions.closeNodeMenu()
+                } else if (e.key === "Escape") {
+                  setIsRenaming(false)
+                }
+              }}
+              className="w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-sm text-neutral-100 outline-none focus:border-white/25"
+            />
+            <div className="flex gap-1.5">
+              <Button
+                className="flex-1 justify-center text-neutral-200"
+                onClick={() => {
+                  actions.renameNode(nodeId, renameValue)
+                  setIsRenaming(false)
+                  actions.closeNodeMenu()
+                }}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Confirm
+              </Button>
+              <Button
+                className="flex-1 justify-center text-neutral-500"
+                onClick={() => setIsRenaming(false)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-0.5">
+            <Button
+              className="justify-start text-neutral-200"
+              onClick={() => {
+                setIsRenaming(true)
+                setRenameValue(label)
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <PencilLine className="size-4" />
+              change node
+            </Button>
+            <Button
+              className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
+              onClick={() => actions.deleteNode(nodeId)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 className="size-4" />
+              delete node
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
