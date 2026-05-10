@@ -1,166 +1,89 @@
 "use client"
 
-import { useMutation } from "@tanstack/react-query"
+import * as React from "react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
   FileText,
-  ImageIcon,
   Loader2,
-  Music,
-  Paperclip,
-  Plus,
-  Sparkles,
+  Shuffle,
   Trash2,
   Upload,
-  Video,
   X,
 } from "lucide-react"
-import * as React from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import { getApiErrorMessage } from "@/lib/api/auth"
-import { generateMaterialsFromFile, type Flashcard } from "@/lib/api/materials"
+import {
+  deleteMaterial,
+  generateMaterialsFromFile,
+  getMaterial,
+  listMaterials,
+  type Flashcard,
+  type MaterialListItem,
+} from "@/lib/api/materials"
+import { cn } from "@/lib/utils"
 
-type UploadedFile = {
-  id: string
-  name: string
-  size: number
-  type: string
-}
-
-type Note = {
-  id: string
-  title: string
-  content: string
-  createdAt: Date
-}
-
-function getFileIcon(type: string) {
-  if (type.startsWith("image/")) return ImageIcon
-  if (type.startsWith("video/")) return Video
-  if (type.startsWith("audio/")) return Music
-  if (type.includes("pdf") || type.includes("text")) return FileText
-  return Paperclip
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+type ViewState =
+  | { view: "none" }
+  | { view: "notes-list" }
+  | { view: "cards-list" }
+  | { view: "note-detail"; materialId: string }
+  | { view: "cards-viewer"; materialId: string }
 
 export function MaterialsTab({ nodeId }: { nodeId: string }) {
-  const [uploadedFile, setUploadedFile] = React.useState<UploadedFile | null>(
-    null
-  )
-  const [generatedCards, setGeneratedCards] = React.useState<Flashcard[]>([])
-  const [generatedNotes, setGeneratedNotes] = React.useState("")
-  const [myNotes, setMyNotes] = React.useState<Note[]>([])
-  const [isDragging, setIsDragging] = React.useState(false)
-  const [noteTitle, setNoteTitle] = React.useState("")
-  const [noteContent, setNoteContent] = React.useState("")
+  const queryClient = useQueryClient()
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const [prompt, setPrompt] = React.useState("")
+  const [viewState, setViewState] = React.useState<ViewState>({ view: "none" })
+
+  const materialsQuery = useQuery({
+    queryKey: ["materials", nodeId],
+    queryFn: () => listMaterials(nodeId),
+    staleTime: 30_000,
+  })
+
+  const allMaterials = materialsQuery.data ?? []
+  const savedNotes = allMaterials.filter((m) => m.type === "notes")
+  const savedCards = allMaterials.filter((m) => m.type === "cards")
 
   const generateMutation = useMutation({
-    mutationFn: (file: File) =>
-      generateMaterialsFromFile(nodeId, file, "both"),
-    onSuccess: (data) => {
-      setGeneratedCards(data.cards)
-      setGeneratedNotes(data.notes)
+    mutationFn: (file: File) => generateMaterialsFromFile(nodeId, file, "both"),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["materials", nodeId] })
+      toast.success("Materials generated and saved")
     },
-    onError: (error) => {
-      toast.error(getApiErrorMessage(error))
-      setUploadedFile(null)
-    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
   })
 
   function handleFile(file: File) {
-    setUploadedFile({
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-      type: file.type,
-    })
-    setGeneratedCards([])
-    setGeneratedNotes("")
     generateMutation.mutate(file)
   }
 
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault()
-    setIsDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFile(file)
-  }
-
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault()
-    setIsDragging(true)
-  }
-
-  function addNote() {
-    if (!noteContent.trim()) return
-    setMyNotes((prev) => [
-      {
-        id: crypto.randomUUID(),
-        title: noteTitle.trim() || "Untitled",
-        content: noteContent.trim(),
-        createdAt: new Date(),
-      },
-      ...prev,
-    ])
-    setNoteTitle("")
-    setNoteContent("")
-  }
-
-  const isPending = generateMutation.isPending
-  const hasResults = generatedCards.length > 0 || generatedNotes.length > 0
-
   return (
-    <div className="grid gap-10 py-6">
-      {/* Upload */}
-      <section className="grid gap-4">
-        <h2 className="text-xs font-medium uppercase tracking-widest text-neutral-500">
-          Upload
-        </h2>
-
-        {!uploadedFile ? (
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragLeave={() => setIsDragging(false)}
-            onKeyDown={(e) =>
-              e.key === "Enter" && fileInputRef.current?.click()
-            }
-            className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-10 outline-none transition-colors ${
-              isDragging
-                ? "border-white/30 bg-white/5"
-                : "border-white/10 hover:border-white/20 hover:bg-white/[0.02]"
-            }`}
-          >
-            <div className="flex size-10 items-center justify-center rounded-full bg-white/5">
-              <Upload className="size-5 text-neutral-400" />
-            </div>
-            <div className="text-center">
-              <p className="text-sm text-neutral-300">
-                Drop a file here or{" "}
-                <span className="text-white underline underline-offset-2">
-                  click to upload
-                </span>
-              </p>
-              <p className="mt-1 text-xs text-neutral-600">
-                AI will generate flashcards and notes
-              </p>
-            </div>
+    <>
+      <div className="grid gap-8 py-6">
+        {/* Generate */}
+        <section className="grid gap-3">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-neutral-500">
+            Generate
+          </h2>
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Optional instructions for AI generation…"
+            rows={2}
+            className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-neutral-300 outline-none placeholder:text-neutral-600 transition-colors focus:border-white/20"
+          />
+          <div>
             <input
               ref={fileInputRef}
               type="file"
+              accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0]
@@ -168,176 +91,444 @@ export function MaterialsTab({ nodeId }: { nodeId: string }) {
                 e.target.value = ""
               }}
             />
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3">
-            {(() => {
-              const Icon = getFileIcon(uploadedFile.type)
-              return (
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/5">
-                  <Icon className="size-4 text-neutral-400" />
-                </div>
-              )
-            })()}
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm text-neutral-200">
-                {uploadedFile.name}
-              </p>
-              <p className="text-xs text-neutral-500">
-                {formatBytes(uploadedFile.size)}
-                {isPending && (
-                  <span className="ml-2 text-neutral-600">Generating…</span>
-                )}
-              </p>
-            </div>
-            {isPending ? (
-              <Loader2 className="size-4 shrink-0 animate-spin text-neutral-500" />
-            ) : (
-              <button
-                onClick={() => {
-                  setUploadedFile(null)
-                  setGeneratedCards([])
-                  setGeneratedNotes("")
-                }}
-                className="shrink-0 rounded p-1 text-neutral-600 hover:text-neutral-300"
-                aria-label="Remove file"
-              >
-                <X className="size-4" />
-              </button>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* AI Generated — shown only after successful generation or while pending */}
-      {(isPending || hasResults) && (
-        <section className="grid gap-6">
-          <h2 className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-widest text-neutral-500">
-            <Sparkles className="size-3" />
-            AI Generated
-          </h2>
-
-          {/* Flashcards */}
-          <div className="grid gap-3">
-            <p className="text-xs text-neutral-600">Flashcards</p>
-            {isPending ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-28 rounded-xl bg-white/5" />
-                ))}
-              </div>
-            ) : generatedCards.length > 0 ? (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {generatedCards.map((card, i) => (
-                  <div
-                    key={i}
-                    className="grid divide-y divide-white/10 rounded-xl border border-white/10 bg-white/[0.03]"
-                  >
-                    <div className="px-4 py-3">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
-                        Question
-                      </p>
-                      <p className="text-sm text-neutral-200">{card.front}</p>
-                    </div>
-                    <div className="px-4 py-3">
-                      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
-                        Answer
-                      </p>
-                      <p className="text-sm text-neutral-400">{card.back}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          {/* Notes */}
-          <div className="grid gap-3">
-            <p className="text-xs text-neutral-600">Notes</p>
-            {isPending ? (
-              <div className="grid gap-2">
-                <Skeleton className="h-4 rounded bg-white/5" />
-                <Skeleton className="h-4 w-5/6 rounded bg-white/5" />
-                <Skeleton className="h-4 w-4/6 rounded bg-white/5" />
-                <Skeleton className="h-4 w-5/6 rounded bg-white/5" />
-                <Skeleton className="h-4 w-3/6 rounded bg-white/5" />
-              </div>
-            ) : generatedNotes ? (
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-300">
-                  {generatedNotes}
-                </p>
-              </div>
-            ) : null}
+            <button
+              type="button"
+              disabled={generateMutation.isPending}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {generateMutation.isPending ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  <span>Generating…</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="size-4" />
+                  <span>Upload file &amp; generate</span>
+                </>
+              )}
+            </button>
           </div>
         </section>
-      )}
 
-      {/* My Notes */}
-      <section className="grid gap-4">
-        <h2 className="text-xs font-medium uppercase tracking-widest text-neutral-500">
-          My Notes
-        </h2>
-
-        <div className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-4">
-          <Input
-            value={noteTitle}
-            onChange={(e) => setNoteTitle(e.target.value)}
-            placeholder="Title (optional)"
-            className="border-transparent bg-transparent px-0 text-sm font-medium text-neutral-100 placeholder:text-neutral-600 focus-visible:ring-0"
-          />
-          <Textarea
-            value={noteContent}
-            onChange={(e) => setNoteContent(e.target.value)}
-            placeholder="Write a note…"
-            rows={3}
-            className="resize-none border-transparent bg-transparent px-0 text-sm text-neutral-300 placeholder:text-neutral-600 focus-visible:ring-0"
-          />
-          <div className="flex justify-end">
-            <Button size="sm" disabled={!noteContent.trim()} onClick={addNote}>
-              <Plus className="mr-1 size-3.5" />
-              Add note
-            </Button>
+        {/* Library */}
+        <section className="grid gap-3">
+          <h2 className="text-xs font-medium uppercase tracking-widest text-neutral-500">
+            Library
+          </h2>
+          <div className="grid grid-cols-2 gap-4">
+            <LibraryCard
+              icon={FileText}
+              label="Notes"
+              count={savedNotes.length}
+              isLoading={materialsQuery.isLoading}
+              onClick={() => setViewState({ view: "notes-list" })}
+            />
+            <LibraryCard
+              icon={BookOpen}
+              label="Flashcards"
+              count={savedCards.length}
+              isLoading={materialsQuery.isLoading}
+              onClick={() => setViewState({ view: "cards-list" })}
+            />
           </div>
+        </section>
+      </div>
+
+      {/* Overlays */}
+      {viewState.view === "notes-list" && (
+        <MaterialsListOverlay
+          title="Notes"
+          emptyLabel="notes"
+          items={savedNotes}
+          nodeId={nodeId}
+          onSelect={(id) => setViewState({ view: "note-detail", materialId: id })}
+          onClose={() => setViewState({ view: "none" })}
+        />
+      )}
+      {viewState.view === "cards-list" && (
+        <MaterialsListOverlay
+          title="Flashcard Packs"
+          emptyLabel="flashcard packs"
+          items={savedCards}
+          nodeId={nodeId}
+          onSelect={(id) => setViewState({ view: "cards-viewer", materialId: id })}
+          onClose={() => setViewState({ view: "none" })}
+        />
+      )}
+      {viewState.view === "note-detail" && (
+        <NoteDetailOverlay
+          nodeId={nodeId}
+          materialId={viewState.materialId}
+          onClose={() => setViewState({ view: "notes-list" })}
+        />
+      )}
+      {viewState.view === "cards-viewer" && (
+        <CardsViewerOverlay
+          nodeId={nodeId}
+          materialId={viewState.materialId}
+          onClose={() => setViewState({ view: "cards-list" })}
+        />
+      )}
+    </>
+  )
+}
+
+// ── Library card ──────────────────────────────────────────────
+
+function LibraryCard({
+  icon: Icon,
+  label,
+  count,
+  isLoading,
+  onClick,
+}: {
+  icon: React.ElementType
+  label: string
+  count: number
+  isLoading: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-left transition-colors hover:border-white/20 hover:bg-white/[0.05]"
+    >
+      <div className="flex size-10 items-center justify-center rounded-xl bg-white/5 transition-colors group-hover:bg-white/10">
+        <Icon className="size-5 text-neutral-400 transition-colors group-hover:text-neutral-200" />
+      </div>
+      <div>
+        <p className="text-base font-medium text-neutral-200">{label}</p>
+        <p className="mt-0.5 text-sm text-neutral-500">
+          {isLoading ? (
+            <span className="inline-block h-3 w-10 animate-pulse rounded bg-white/10" />
+          ) : count === 0 ? (
+            "Empty"
+          ) : (
+            `${count} saved`
+          )}
+        </p>
+      </div>
+    </button>
+  )
+}
+
+// ── Shared list overlay ───────────────────────────────────────
+
+function MaterialsListOverlay({
+  title,
+  emptyLabel,
+  items,
+  nodeId,
+  onSelect,
+  onClose,
+}: {
+  title: string
+  emptyLabel: string
+  items: MaterialListItem[]
+  nodeId: string
+  onSelect: (id: string) => void
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+
+  const deleteMutation = useMutation({
+    mutationFn: (materialId: string) => deleteMaterial(nodeId, materialId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["materials", nodeId] })
+    },
+    onError: (error) => toast.error(getApiErrorMessage(error)),
+  })
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+          <h2 className="text-sm font-semibold text-neutral-100">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex size-7 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200"
+          >
+            <X className="size-4" />
+          </button>
         </div>
 
-        {myNotes.length > 0 && (
-          <div className="grid gap-3 sm:grid-cols-2">
-            {myNotes.map((note) => (
-              <div
-                key={note.id}
-                className="group relative rounded-xl border border-white/10 bg-white/[0.03] p-4"
-              >
-                <button
-                  onClick={() =>
-                    setMyNotes((prev) => prev.filter((n) => n.id !== note.id))
-                  }
-                  className="absolute right-3 top-3 rounded p-1 text-neutral-600 opacity-0 transition-opacity hover:text-neutral-300 group-hover:opacity-100"
-                  aria-label="Delete note"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-                {note.title !== "Untitled" && (
-                  <p className="mb-1 pr-6 text-sm font-medium text-neutral-200">
-                    {note.title}
-                  </p>
-                )}
-                <p className="whitespace-pre-wrap text-sm text-neutral-400">
-                  {note.content}
-                </p>
-                <p className="mt-3 text-xs text-neutral-600">
-                  {note.createdAt.toLocaleDateString(undefined, {
-                    day: "numeric",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </p>
-              </div>
-            ))}
+        <div className="max-h-[60vh] overflow-y-auto p-2">
+          {items.length === 0 ? (
+            <p className="py-12 text-center text-sm text-neutral-600">
+              No saved {emptyLabel} yet.
+            </p>
+          ) : (
+            <ul className="grid gap-0.5">
+              {items.map((item) => (
+                <li key={item.id} className="group flex items-center gap-2 rounded-xl px-3 py-3 hover:bg-white/[0.05]">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => onSelect(item.id)}
+                  >
+                    <p className="truncate text-sm font-medium text-neutral-200">
+                      {item.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-neutral-600">
+                      {new Date(item.created_at).toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteMutation.mutate(item.id)}
+                    disabled={deleteMutation.isPending}
+                    className="shrink-0 rounded-lg p-1.5 text-neutral-600 opacity-0 transition-all hover:bg-red-950/40 hover:text-red-400 group-hover:opacity-100 disabled:opacity-30"
+                    aria-label="Delete"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Note detail overlay (fullscreen) ─────────────────────────
+
+function NoteDetailOverlay({
+  nodeId,
+  materialId,
+  onClose,
+}: {
+  nodeId: string
+  materialId: string
+  onClose: () => void
+}) {
+  const materialQuery = useQuery({
+    queryKey: ["material", nodeId, materialId],
+    queryFn: () => getMaterial(nodeId, materialId),
+    staleTime: 60_000,
+  })
+
+  const material = materialQuery.data
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950">
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-6 py-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex size-8 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          <ChevronLeft className="size-5" />
+        </button>
+        <h2 className="flex-1 truncate text-sm font-semibold text-neutral-100">
+          {material?.title ?? "Note"}
+        </h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex size-8 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 py-8">
+        {materialQuery.isLoading ? (
+          <div className="flex items-center justify-center py-24">
+            <Loader2 className="size-6 animate-spin text-neutral-600" />
           </div>
+        ) : material ? (
+          <div className="prose prose-invert prose-sm mx-auto max-w-2xl [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {material.content}
+            </ReactMarkdown>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+// ── Flashcard viewer overlay (fullscreen) ────────────────────
+
+function CardsViewerOverlay({
+  nodeId,
+  materialId,
+  onClose,
+}: {
+  nodeId: string
+  materialId: string
+  onClose: () => void
+}) {
+  const materialQuery = useQuery({
+    queryKey: ["material", nodeId, materialId],
+    queryFn: () => getMaterial(nodeId, materialId),
+    staleTime: 60_000,
+  })
+
+  const [cards, setCards] = React.useState<Flashcard[]>([])
+  const [currentIndex, setCurrentIndex] = React.useState(0)
+  const [isFlipped, setIsFlipped] = React.useState(false)
+
+  React.useEffect(() => {
+    if (materialQuery.data?.cards) {
+      setCards(materialQuery.data.cards)
+      setCurrentIndex(0)
+      setIsFlipped(false)
+    }
+  }, [materialQuery.data])
+
+  function goTo(index: number) {
+    setCurrentIndex(index)
+    setIsFlipped(false)
+  }
+
+  function shuffle() {
+    setCards((prev) => {
+      const arr = [...prev]
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      return arr
+    })
+    setCurrentIndex(0)
+    setIsFlipped(false)
+  }
+
+  const card = cards[currentIndex]
+  const total = cards.length
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-neutral-950">
+      {/* Header */}
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-6 py-4">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex size-8 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          <ChevronLeft className="size-5" />
+        </button>
+        <h2 className="flex-1 truncate text-sm font-semibold text-neutral-100">
+          {materialQuery.data?.title ?? "Flashcards"}
+        </h2>
+        <button
+          type="button"
+          onClick={shuffle}
+          disabled={total === 0}
+          className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-30"
+        >
+          <Shuffle className="size-3.5" />
+          Shuffle
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex size-8 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+
+      {/* Card area */}
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-8">
+        {materialQuery.isLoading ? (
+          <Loader2 className="size-8 animate-spin text-neutral-600" />
+        ) : card ? (
+          <>
+            <p className="text-sm tabular-nums text-neutral-500">
+              {currentIndex + 1} / {total}
+            </p>
+
+            {/* Flip card */}
+            <div
+              className="w-full max-w-lg cursor-pointer select-none"
+              style={{ perspective: "1200px" }}
+              onClick={() => setIsFlipped((v) => !v)}
+            >
+              <div
+                style={{
+                  transformStyle: "preserve-3d",
+                  transition: "transform 0.45s ease",
+                  transform: isFlipped ? "rotateY(180deg)" : "none",
+                  height: "260px",
+                  position: "relative",
+                }}
+              >
+                {/* Front */}
+                <div
+                  className="absolute inset-0 flex flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-8 py-8"
+                  style={{ backfaceVisibility: "hidden" }}
+                >
+                  <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+                    Question
+                  </p>
+                  <p className="flex-1 text-base leading-relaxed text-neutral-100">
+                    {card.front}
+                  </p>
+                  <p className="mt-4 text-xs text-neutral-600">
+                    Click to reveal answer
+                  </p>
+                </div>
+
+                {/* Back */}
+                <div
+                  className="absolute inset-0 flex flex-col rounded-2xl border border-white/10 bg-indigo-950/25 px-8 py-8"
+                  style={{
+                    backfaceVisibility: "hidden",
+                    transform: "rotateY(180deg)",
+                  }}
+                >
+                  <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-indigo-400/60">
+                    Answer
+                  </p>
+                  <p className="flex-1 text-base leading-relaxed text-neutral-200">
+                    {card.back}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Navigation */}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => goTo(currentIndex - 1)}
+                disabled={currentIndex === 0}
+                className="flex size-11 items-center justify-center rounded-xl border border-white/10 text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-30"
+              >
+                <ChevronLeft className="size-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => goTo(currentIndex + 1)}
+                disabled={currentIndex === total - 1}
+                className="flex size-11 items-center justify-center rounded-xl border border-white/10 text-neutral-400 transition-colors hover:border-white/20 hover:text-neutral-200 disabled:opacity-30"
+              >
+                <ChevronRight className="size-5" />
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-neutral-600">No cards in this pack.</p>
         )}
-      </section>
+      </div>
     </div>
   )
 }
