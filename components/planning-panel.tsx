@@ -5,6 +5,9 @@ import { ArrowUp, Upload, X } from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+
 import { Spinner } from "@/components/ui/spinner"
 import {
   generateGraphFromFile,
@@ -17,11 +20,13 @@ export function PlanningPanel({
   graphId,
   messages,
   onMessagesChange,
+  onMessageSaved,
   onClose,
 }: {
   graphId: string
   messages: ChatMessage[]
   onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  onMessageSaved: (role: "user" | "assistant", content: string) => void
   onClose: () => void
 }) {
   const queryClient = useQueryClient()
@@ -57,12 +62,16 @@ export function PlanningPanel({
     setIsStreaming(true)
     const history = messages
 
+    let assistantContent = ""
+    let streamFailed = false
+
     try {
       for await (const chunk of streamPlanningPanel({
         graphId,
         message: trimmed,
         history,
       })) {
+        assistantContent += chunk
         onMessagesChange((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -76,6 +85,7 @@ export function PlanningPanel({
         })
       }
     } catch {
+      streamFailed = true
       toast.error("Planning request failed")
       onMessagesChange((prev) => {
         const last = prev[prev.length - 1]
@@ -92,6 +102,13 @@ export function PlanningPanel({
       setIsStreaming(false)
       void queryClient.invalidateQueries({ queryKey: ["graph-nodes", graphId] })
       void queryClient.invalidateQueries({ queryKey: ["graph-edges", graphId] })
+    }
+
+    if (!streamFailed) {
+      onMessageSaved("user", trimmed)
+      if (assistantContent) {
+        onMessageSaved("assistant", assistantContent)
+      }
     }
   }
 
@@ -191,8 +208,10 @@ export function PlanningPanel({
                   {msg.content}
                 </div>
               ) : (
-                <div className="max-w-[85%] whitespace-pre-wrap text-sm leading-relaxed text-neutral-200">
-                  {msg.content}
+                <div className="max-w-[85%] prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.content}
+                  </ReactMarkdown>
                   {isStreaming && i === messages.length - 1 && (
                     <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-neutral-400 align-middle" />
                   )}

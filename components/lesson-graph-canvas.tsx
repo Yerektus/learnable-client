@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import * as React from "react"
 import {
+  BookOpen,
   ChevronRight,
   Circle,
   Hand,
@@ -17,14 +18,18 @@ import {
 } from "lucide-react"
 import {
   Handle,
+  MarkerType,
   Position,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
   applyNodeChanges,
+  useEdges,
   useEdgesState,
+  useNodes,
   useNodesState,
   useReactFlow,
+  useViewport,
   type Connection,
   type Edge,
   type Node,
@@ -86,6 +91,7 @@ type ClusterData = {
 
 type QuizData = {
   label: string
+  description?: string
   falkordbDeadlineId?: string
 }
 
@@ -99,6 +105,7 @@ type CanvasTool = "cursor" | "hand" | "pen"
 type ConnectedNodeType = "lesson" | "topic"
 
 const MAX_HISTORY = 20
+const GHOST_CONNECT_RADIUS = 120
 
 type ApiSnapshot = {
   nodes: ApiGraphNode[]
@@ -208,6 +215,7 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
   const [nodes, setNodes] = useNodesState<GraphNode>([])
   const [graphEdges, setGraphEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [activeNodeId, setActiveNodeId] = React.useState<string | null>(null)
+  const [ghostPosition, setGhostPosition] = React.useState<{ x: number; y: number } | null>(null)
   const isHandTool = activeTool === "hand"
   const isDrawingTool = activeTool === "pen"
   const nodesQueryKey = React.useMemo(() => ["graph-nodes", graphId], [graphId])
@@ -377,32 +385,6 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     [captureSnapshot, graphId, queryClient, nodesQueryKey, edgesQueryKey]
   )
 
-  const addLessonNode = React.useCallback(
-    (position: { x: number; y: number }) => {
-      const snapshot = captureSnapshot()
-      nextCustomNodeId.current += 1
-
-      createNodeMutation.mutate(
-        {
-          title: getNextDefaultNodeLabel(nodes, "lesson"),
-          node_type: "lesson",
-          position_x: position.x,
-          position_y: position.y,
-          size: 56,
-        },
-        {
-          onSuccess: () => {
-            setUndoStack((prev) => [
-              ...prev.slice(-(MAX_HISTORY - 1)),
-              snapshot,
-            ])
-            setRedoStack([])
-          },
-        }
-      )
-    },
-    [captureSnapshot, createNodeMutation, nodes]
-  )
   const addClusterAroundSelection = React.useCallback(() => {
     const selectedNodes = nodes.filter(
       (node) =>
@@ -757,15 +739,93 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
         return
       }
 
-      addLessonNode(
-        screenToFlowPosition({
-          x: event.clientX,
-          y: event.clientY,
-        })
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      })
+
+      const realNodes = nodes.filter(
+        (n) => n.type !== "cluster" && n.type !== "quiz"
+      )
+      const hasExistingNodes = realNodes.length > 0
+      const nodesInRadius = realNodes.filter((n) => {
+        const dx = n.position.x - position.x
+        const dy = n.position.y - position.y
+        return Math.hypot(dx, dy) < GHOST_CONNECT_RADIUS
+      })
+
+      if (hasExistingNodes && nodesInRadius.length === 0) {
+        toast.warning("Move closer to an existing node to connect")
+        return
+      }
+
+      const snapshot = captureSnapshot()
+
+      createNodeMutation.mutate(
+        {
+          title: getNextDefaultNodeLabel(nodes, "lesson"),
+          node_type: "lesson",
+          position_x: position.x,
+          position_y: position.y,
+          size: 56,
+        },
+        {
+          onSuccess: async (newNode) => {
+            setUndoStack((prev) => [
+              ...prev.slice(-(MAX_HISTORY - 1)),
+              snapshot,
+            ])
+            setRedoStack([])
+
+            const newFlowEdges: Edge[] = []
+            for (const nearbyNode of nodesInRadius) {
+              try {
+                const edge = await createEdgeMutation.mutateAsync({
+                  source_node_id: nearbyNode.id,
+                  target_node_id: newNode.id,
+                })
+                newFlowEdges.push(createApiGraphEdge(edge))
+              } catch {
+                // continue on individual edge failure
+              }
+            }
+
+            if (newFlowEdges.length > 0) {
+              setGraphEdges((current) => [...current, ...newFlowEdges])
+            }
+
+            setActiveNodeId(newNode.id)
+          },
+        }
       )
     },
-    [addLessonNode, isDrawingTool, screenToFlowPosition]
+    [
+      captureSnapshot,
+      createEdgeMutation,
+      createNodeMutation,
+      isDrawingTool,
+      nodes,
+      screenToFlowPosition,
+      setGraphEdges,
+    ]
   )
+
+  const handleContainerMouseMove = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!isDrawingTool) {
+        setGhostPosition(null)
+        return
+      }
+      setGhostPosition(
+        screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      )
+    },
+    [isDrawingTool, screenToFlowPosition]
+  )
+
+  const handleContainerMouseLeave = React.useCallback(() => {
+    setGhostPosition(null)
+  }, [])
   const applyNodeForces = React.useCallback(
     (_event: React.MouseEvent, draggedNode: GraphNode) => {
       if (!isForceNode(draggedNode)) {
@@ -888,6 +948,22 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [undo, redo])
 
+  React.useEffect(() => {
+    if (!isDrawingTool) setGhostPosition(null)
+  }, [isDrawingTool])
+
+  const nearbyNodePositions = React.useMemo(() => {
+    if (!ghostPosition || !isDrawingTool) return []
+    return nodes
+      .filter((n) => n.type !== "cluster" && n.type !== "quiz")
+      .filter((n) => {
+        const dx = n.position.x - ghostPosition.x
+        const dy = n.position.y - ghostPosition.y
+        return Math.hypot(dx, dy) < GHOST_CONNECT_RADIUS
+      })
+      .map((n) => n.position)
+  }, [ghostPosition, isDrawingTool, nodes])
+
   const nodeActionContextValue = React.useMemo(
     () => ({
       activeNodeId,
@@ -909,6 +985,8 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
     <div
       ref={containerRef}
       className="relative h-[calc(100svh-5rem)] min-h-[520px] w-full bg-neutral-950"
+      onMouseMove={handleContainerMouseMove}
+      onMouseLeave={handleContainerMouseLeave}
     >
       <GraphCanvasToolbar
         activeTool={activeTool}
@@ -963,6 +1041,12 @@ function ResponsiveLessonGraph({ graphId }: { graphId: string }) {
           )}
         />
       </NodeActionContext.Provider>
+      {isDrawingTool && ghostPosition && (
+        <PenToolOverlay
+          ghostPosition={ghostPosition}
+          nearbyNodePositions={nearbyNodePositions}
+        />
+      )}
     </div>
   )
 }
@@ -1120,9 +1204,28 @@ function ToolbarButton({
 }
 
 function LessonNodeView({ data, id }: NodeProps<LessonNode>) {
+  const allEdges = useEdges()
+  const allNodes = useNodes()
+  const isIsolated =
+    allNodes.length > 1 &&
+    !allEdges.some((e) => e.source === id || e.target === id)
+
   return (
     <NodeActionPopover label={data.label} nodeId={id} nodeType="lesson">
       <div className="relative" style={{ width: data.size, height: data.size }}>
+        {isIsolated && (
+          <>
+            <span
+              className="pointer-events-none absolute -inset-2 rounded-full border-2 border-red-500/60 animate-pulse"
+              aria-hidden
+            />
+            <span
+              className="pointer-events-none absolute -inset-2 rounded-full border border-red-500/30 animate-ping"
+              style={{ animationDuration: "2s" }}
+              aria-hidden
+            />
+          </>
+        )}
         <span
           className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-10 -translate-x-1/2 rounded bg-neutral-950/85 px-1.5 py-0.5 text-[11px] leading-none font-medium whitespace-nowrap text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
           aria-hidden
@@ -1143,11 +1246,29 @@ function LessonNodeView({ data, id }: NodeProps<LessonNode>) {
 }
 
 function TopicNodeView({ data, id }: NodeProps<TopicNode>) {
+  const allEdges = useEdges()
+  const allNodes = useNodes()
   const size = data.size ?? 20
+  const isIsolated =
+    allNodes.length > 1 &&
+    !allEdges.some((e) => e.source === id || e.target === id)
 
   return (
     <NodeActionPopover label={data.label ?? ""} nodeId={id} nodeType="topic">
       <div className="relative" style={{ width: size, height: size }}>
+        {isIsolated && (
+          <>
+            <span
+              className="pointer-events-none absolute -inset-2 rounded-full border-2 border-red-500/60 animate-pulse"
+              aria-hidden
+            />
+            <span
+              className="pointer-events-none absolute -inset-2 rounded-full border border-red-500/30 animate-ping"
+              style={{ animationDuration: "2s" }}
+              aria-hidden
+            />
+          </>
+        )}
         {data.label ? (
           <div
             className="pointer-events-none absolute top-1/2 left-1/2 z-10 flex items-center gap-1.5 rounded-full bg-neutral-950/90 pr-2 text-[10px] leading-none font-medium whitespace-nowrap text-neutral-200 shadow-[0_0_0_1px_rgba(255,255,255,0.1),0_8px_18px_rgba(0,0,0,0.35)]"
@@ -1197,20 +1318,18 @@ function ClusterNodeView({ data }: NodeProps<ClusterNode>) {
 }
 
 function QuizNodeView({ data, id }: NodeProps<QuizNode>) {
-  const router = useRouter()
-
   if (data.falkordbDeadlineId) {
-    const deadlineId = data.falkordbDeadlineId
     return (
-      <div
-        className="cursor-pointer rounded-full bg-[#4a252b]/85 px-4 py-1 text-sm font-semibold text-[#b9545c]"
-        onClick={() => router.push(`/dashboard/deadlines/${deadlineId}`)}
-        onKeyDown={(e) => { if (e.key === "Enter") router.push(`/dashboard/deadlines/${deadlineId}`) }}
-        role="button"
-        tabIndex={0}
+      <DeadlineActionPopover
+        deadlineId={data.falkordbDeadlineId}
+        description={data.description}
+        label={data.label}
+        nodeId={id}
       >
-        {data.label}
-      </div>
+        <div className="rounded-full bg-[#4a252b]/85 px-4 py-1 text-sm font-semibold text-[#b9545c]">
+          {data.label}
+        </div>
+      </DeadlineActionPopover>
     )
   }
 
@@ -1223,7 +1342,146 @@ function QuizNodeView({ data, id }: NodeProps<QuizNode>) {
   )
 }
 
-function NodeActionPopover({
+function DeadlineActionPopover({
+  children,
+  label,
+  nodeId,
+  deadlineId,
+  description,
+}: {
+  children: React.ReactNode
+  label: string
+  nodeId: string
+  deadlineId: string
+  description?: string
+}) {
+  const actions = useNodeActions()
+  const router = useRouter()
+  const isOpen = actions.activeNodeId === nodeId
+
+  const coveredTopics = React.useMemo(() => {
+    if (!description) return []
+    return description.split(",").map((t) => t.trim()).filter(Boolean)
+  }, [description])
+
+  const pointerStartRef = React.useRef<{ hasMoved: boolean; x: number; y: number } | null>(null)
+
+  const handleNodeClickCapture = React.useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.button !== 0 || pointerStartRef.current?.hasMoved) {
+        pointerStartRef.current = null
+        return
+      }
+      pointerStartRef.current = null
+      actions.openNodeMenu(nodeId)
+    },
+    [actions, nodeId],
+  )
+
+  const handlePointerDown = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) {
+        pointerStartRef.current = null
+        return
+      }
+      pointerStartRef.current = { hasMoved: false, x: event.clientX, y: event.clientY }
+    },
+    [],
+  )
+
+  const handlePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const pointerStart = pointerStartRef.current
+    if (!pointerStart) return
+    if (Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) {
+      pointerStart.hasMoved = true
+    }
+  }, [])
+
+  return (
+    <Popover
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) actions.closeNodeMenu()
+      }}
+    >
+      <PopoverTrigger
+        nativeButton={false}
+        render={
+          <div
+            aria-label="Open deadline options"
+            className="cursor-pointer"
+            onClickCapture={handleNodeClickCapture}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            role="button"
+            tabIndex={0}
+          >
+            {children}
+          </div>
+        }
+      />
+      <PopoverContent
+        align="center"
+        className="nodrag nopan nowheel w-64 rounded-xl border border-white/10 bg-neutral-900 p-3 text-neutral-100 shadow-2xl"
+        side="top"
+        sideOffset={12}
+      >
+        <div className="mb-2 flex items-center gap-2 px-1">
+          <div className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+          <span className="truncate text-sm font-medium text-neutral-100">{label}</span>
+        </div>
+
+        <Separator className="mb-2 bg-white/10" />
+
+        {coveredTopics.length > 0 && (
+          <>
+            <div className="mb-1 px-1">
+              <p className="mb-1.5 text-xs font-medium text-neutral-500">Covered topics</p>
+              <ul className="flex flex-col gap-0.5">
+                {coveredTopics.map((topic) => (
+                  <li key={topic} className="px-1 text-sm text-neutral-400">
+                    {topic}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <Separator className="my-2 bg-white/10" />
+          </>
+        )}
+
+        <div className="grid gap-0.5">
+          <Button
+            className="justify-start text-neutral-200"
+            onClick={() => {
+              actions.closeNodeMenu()
+              router.push(`/dashboard/deadlines/${deadlineId}`)
+            }}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <BookOpen className="size-4" />
+            Prepare
+          </Button>
+          <Button
+            className="justify-start text-red-400 hover:bg-red-950/40 hover:text-red-300"
+            onClick={() => actions.deleteNode(nodeId)}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function NodeActionPopover(function NodeActionPopover({
   children,
   label,
   nodeId,
@@ -1582,6 +1840,49 @@ function hasAttachedLesson(topicId: string, nodes: GraphNode[], edges: Edge[]) {
   })
 }
 
+function PenToolOverlay({
+  ghostPosition,
+  nearbyNodePositions,
+}: {
+  ghostPosition: { x: number; y: number }
+  nearbyNodePositions: { x: number; y: number }[]
+}) {
+  const { x: vpX, y: vpY, zoom } = useViewport()
+
+  return (
+    <svg
+      className="pointer-events-none absolute inset-0 z-10"
+      width="100%"
+      height="100%"
+      aria-hidden
+    >
+      <g transform={`translate(${vpX}, ${vpY}) scale(${zoom})`}>
+        {nearbyNodePositions.map((pos, i) => (
+          <line
+            key={i}
+            x1={pos.x}
+            y1={pos.y}
+            x2={ghostPosition.x}
+            y2={ghostPosition.y}
+            stroke="rgba(255, 255, 255, 0.38)"
+            strokeWidth={1.5 / zoom}
+            strokeDasharray={`${5 / zoom} ${4 / zoom}`}
+          />
+        ))}
+        <circle
+          cx={ghostPosition.x}
+          cy={ghostPosition.y}
+          r={28}
+          fill="rgba(242, 242, 242, 0.07)"
+          stroke="rgba(242, 242, 242, 0.45)"
+          strokeWidth={1.5 / zoom}
+          strokeDasharray={`${6 / zoom} ${4 / zoom}`}
+        />
+      </g>
+    </svg>
+  )
+}
+
 function createFlowEdge(id: string, source: string, target: string): Edge {
   return {
     id,
@@ -1594,6 +1895,10 @@ function createFlowEdge(id: string, source: string, target: string): Edge {
     style: {
       stroke: "rgba(230, 230, 230, 0.55)",
       strokeWidth: 1,
+    },
+    markerEnd: {
+      type: MarkerType.ArrowClosed,
+      color: "rgba(230, 230, 230, 0.55)",
     },
   }
 }
@@ -1660,6 +1965,7 @@ function createApiGraphNodes(nodes: ApiGraphNode[]): GraphNode[] {
         position,
         data: {
           label: node.title,
+          description: node.description ?? undefined,
           falkordbDeadlineId: node.falkordb_deadline_id ?? undefined,
         },
         draggable: false,

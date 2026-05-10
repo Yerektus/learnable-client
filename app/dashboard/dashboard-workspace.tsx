@@ -56,6 +56,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { ChatMessage } from "@/lib/api/ai"
 import { getApiErrorMessage } from "@/lib/api/auth"
+import { getPlanningChat, savePlanningMessage } from "@/lib/api/chats"
 import { createGraph, listGraphs } from "@/lib/api/graphs"
 import { useAuthStore } from "@/lib/stores/auth-store"
 import { cn } from "@/lib/utils"
@@ -99,10 +100,35 @@ export function DashboardWorkspace({
   const selectedGraph = graphs.find((graph) => graph.id === selectedGraphId)
   const trimmedGraphName = graphName.trim()
 
-  // Сбрасываем историю планировщика при смене графа
+  // При открытии панели — загружаем историю из БД; при смене графа — сбрасываем
+  React.useEffect(() => {
+    if (!isPlanningPanelOpen || !selectedGraphId) {
+      return
+    }
+    getPlanningChat(selectedGraphId)
+      .then((chat) => {
+        setPlanningMessages(
+          chat.messages.map((m) => ({ role: m.role, content: m.content }))
+        )
+      })
+      .catch(() => {
+        // сеть недоступна — оставляем текущие сообщения в памяти
+      })
+  }, [isPlanningPanelOpen, selectedGraphId])
+
   React.useEffect(() => {
     setPlanningMessages([])
   }, [selectedGraphId])
+
+  const handlePlanningMessageSaved = React.useCallback(
+    (role: "user" | "assistant", content: string) => {
+      if (!selectedGraphId) return
+      savePlanningMessage(selectedGraphId, role, content).catch(() => {
+        // fire-and-forget: не блокируем UI при ошибке сохранения
+      })
+    },
+    [selectedGraphId]
+  )
 
   const createGraphMutation = useMutation({
     mutationFn: createGraph,
@@ -219,6 +245,7 @@ export function DashboardWorkspace({
                     graphId={selectedGraphId}
                     messages={planningMessages}
                     onMessagesChange={setPlanningMessages}
+                    onMessageSaved={handlePlanningMessageSaved}
                     onClose={() => setIsPlanningPanelOpen(false)}
                   />
                 )}

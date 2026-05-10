@@ -53,6 +53,9 @@ import {
 } from "@/components/ui/sidebar"
 import { Spinner } from "@/components/ui/spinner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
+
 import { streamNodeChat, type ChatMessage, type ChatType } from "@/lib/api/ai"
 import { getApiErrorMessage } from "@/lib/api/auth"
 import {
@@ -658,8 +661,10 @@ function ChatPanel({
                   {msg.content}
                 </div>
               ) : (
-                <div className="max-w-[80%] whitespace-pre-wrap text-sm leading-relaxed text-neutral-200">
-                  {msg.content}
+                <div className="max-w-[80%] prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {msg.content}
+                  </ReactMarkdown>
                   {isStreaming && i === displayMessages.length - 1 && (
                     <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-neutral-400 align-middle" />
                   )}
