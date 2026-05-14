@@ -16,7 +16,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   const hasHydrated = useAuthStore((state) => state.hasHydrated)
   const setTokens = useAuthStore((state) => state.setTokens)
   const setUser = useAuthStore((state) => state.setUser)
-  const clearAuth = useAuthStore((state) => state.clearAuth)
 
   // After hydration: if there's no access token in memory (not persisted),
   // try to get one via the httpOnly refresh cookie before redirecting to login.
@@ -60,13 +59,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       setUser(profileQuery.data)
     }
   }, [profileQuery.data, setUser])
-
-  React.useEffect(() => {
-    if (profileQuery.isError) {
-      clearAuth()
-      router.replace(`/?next=${encodeURIComponent(pathname)}`)
-    }
-  }, [clearAuth, pathname, profileQuery.isError, router])
 
   if (!hasHydrated || !silentRefreshDone || !accessToken || (!user && profileQuery.isLoading)) {
     return <FullPageSpinner />
