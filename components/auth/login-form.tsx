@@ -105,7 +105,10 @@ export function LoginForm({
           ? "Account created successfully."
           : "Logged in successfully."
       )
-      router.replace(searchParams.get("next") ?? "/dashboard")
+      const next = searchParams.get("next") ?? "/dashboard"
+      // Only allow relative paths to prevent open redirect attacks
+      const safePath = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard"
+      router.replace(safePath)
     },
     onError: (error) => {
       toast.error(getApiErrorMessage(error))

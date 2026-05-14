@@ -12,6 +12,9 @@ type RetryRequestConfig = InternalAxiosRequestConfig & {
 
 export const coreApi = axios.create({
   baseURL: API_BASE_URL,
+  // Required so the browser sends the httpOnly refresh_token cookie
+  // cross-origin (backend must have allow_credentials=True and explicit origin)
+  withCredentials: true,
 })
 
 coreApi.interceptors.request.use((config) => {
@@ -37,21 +40,15 @@ coreApi.interceptors.response.use(
       throw error
     }
 
-    const refreshToken = useAuthStore.getState().refreshToken
-
-    if (!refreshToken) {
-      useAuthStore.getState().clearAuth()
-      throw error
-    }
-
     originalRequest._retry = true
 
     try {
+      // The httpOnly refresh_token cookie is sent automatically by the browser.
+      // No body needed — the server reads the cookie.
       const { data } = await axios.post<TokenResponse>(
         `${API_BASE_URL}/api/v1/auth/jwt/refresh`,
-        {
-          refresh_token: refreshToken,
-        },
+        undefined,
+        { withCredentials: true },
       )
 
       useAuthStore.getState().setTokens(data)

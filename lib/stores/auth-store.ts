@@ -7,7 +7,6 @@ import type { TokenResponse, User } from "@/types/auth"
 
 type AuthState = {
   accessToken: string | null
-  refreshToken: string | null
   user: User | null
   hasHydrated: boolean
   setTokens: (tokens: TokenResponse) => void
@@ -20,29 +19,26 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       accessToken: null,
-      refreshToken: null,
       user: null,
       hasHydrated: false,
       setTokens: (tokens) =>
         set({
           accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
         }),
       setUser: (user) => set({ user }),
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       clearAuth: () =>
         set({
           accessToken: null,
-          refreshToken: null,
           user: null,
         }),
     }),
     {
       name: "learnable-auth",
       storage: createJSONStorage(() => localStorage),
+      // Only persist non-sensitive user info — access token is kept in memory only
+      // so it's not readable after page refresh (silent refresh via httpOnly cookie)
       partialize: (state) => ({
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
         user: state.user,
       }),
       onRehydrateStorage: () => (state) => {

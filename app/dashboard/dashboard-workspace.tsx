@@ -57,6 +57,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { ChatMessage } from "@/lib/api/ai"
 import { getApiErrorMessage } from "@/lib/api/auth"
 import { getPlanningChat, savePlanningMessage } from "@/lib/api/chats"
+import { logout as apiLogout } from "@/lib/api/auth"
 import { createGraph, listGraphs } from "@/lib/api/graphs"
 import { useAuthStore } from "@/lib/stores/auth-store"
 import { cn } from "@/lib/utils"
@@ -71,6 +72,9 @@ export function DashboardWorkspace({
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const accessToken = useAuthStore((state) => state.accessToken)
+  const handleLogout = React.useCallback(() => {
+    apiLogout().finally(() => clearAuth())
+  }, [clearAuth])
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = React.useState(false)
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
@@ -175,7 +179,7 @@ export function DashboardWorkspace({
           <div className="flex w-full bg-background">
             <AppSidebar
               userName={user?.username ?? user?.email ?? "Learner"}
-              onLogout={clearAuth}
+              onLogout={handleLogout}
               graphs={graphs}
               isLoadingGraphs={graphsQuery.isLoading}
               onCreateGraph={() => setIsCreateDialogOpen(true)}

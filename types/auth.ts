@@ -12,8 +12,8 @@ export type User = {
 
 export type TokenResponse = {
   access_token: string
-  refresh_token: string
   token_type: "bearer"
+  // refresh_token is now stored in an httpOnly cookie — never sent to JavaScript
 }
 
 export type LoginCredentials = {

@@ -52,7 +52,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { getApiErrorMessage } from "@/lib/api/auth"
+import { getApiErrorMessage, logout as apiLogout } from "@/lib/api/auth"
 import { createGraph, listGraphs } from "@/lib/api/graphs"
 import { useAuthStore } from "@/lib/stores/auth-store"
 
@@ -61,6 +61,9 @@ export default function DashboardPage() {
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
   const accessToken = useAuthStore((state) => state.accessToken)
+  const handleLogout = React.useCallback(() => {
+    apiLogout().finally(() => clearAuth())
+  }, [clearAuth])
   const [isCreateDialogOpen, setIsCreateDialogOpen] = React.useState(false)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = React.useState(false)
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
@@ -129,7 +132,7 @@ export default function DashboardPage() {
           <div className="flex w-full bg-background">
             <AppSidebar
               userName={user?.username ?? user?.email ?? "Learner"}
-              onLogout={clearAuth}
+              onLogout={handleLogout}
               graphs={graphs}
               isLoadingGraphs={graphsQuery.isLoading}
               onCreateGraph={() => setIsCreateDialogOpen(true)}

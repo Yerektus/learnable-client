@@ -57,7 +57,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import { streamNodeChat, type ChatMessage, type ChatType } from "@/lib/api/ai"
-import { getApiErrorMessage } from "@/lib/api/auth"
+import { getApiErrorMessage, logout as apiLogout } from "@/lib/api/auth"
 import {
   createChat,
   deleteChat,
@@ -84,6 +84,9 @@ export default function NodePage() {
   const nodeId = params.nodeId
   const user = useAuthStore((state) => state.user)
   const clearAuth = useAuthStore((state) => state.clearAuth)
+  const handleLogout = React.useCallback(() => {
+    apiLogout().finally(() => clearAuth())
+  }, [clearAuth])
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = React.useState(false)
   const [activeChatId, setActiveChatId] = React.useState<string | null>(null)
 
@@ -182,7 +185,7 @@ export default function NodePage() {
             onNewChat={(type) => createChatMutation.mutate({ type })}
             onSelectChat={setActiveChatId}
             onDeleteChat={(chatId) => deleteChatMutation.mutate(chatId)}
-            onLogout={clearAuth}
+            onLogout={handleLogout}
             onOpenSettings={() => setIsSettingsDialogOpen(true)}
             userName={user?.username ?? user?.email ?? "Learner"}
           />

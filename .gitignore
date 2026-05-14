@@ -28,7 +28,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# env files
+# env files — never commit secrets
+.env
+.env.*
 .env*.local
 
 # typescript
@@ -36,3 +38,6 @@ pnpm-debug.log*
 next-env.d.ts
 
 .vercel
+
+# Claude Code
+.claude/
